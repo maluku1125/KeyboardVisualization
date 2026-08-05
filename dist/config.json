@@ -1,0 +1,81 @@
+{
+  "direction": "rtl",
+  "window_width": 960,
+  "window_height": 340,
+  "background_color": "#0e0e16",
+  "background_opacity": 1.0,
+  "chroma_key": false,
+  "chroma_color": "#00FF00",
+  "scroll_speed": 100,
+  "show_hold": false,
+  "track_all_keys": true,
+  "tracked_keys": [
+    "z",
+    "x",
+    "space",
+    "left",
+    "down",
+    "up",
+    "right"
+  ],
+  "key_labels": {
+    "space": "SPACE",
+    "up": "↑",
+    "down": "↓",
+    "left": "←",
+    "right": "→"
+  },
+  "key_icons": {
+    "1": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Dragon_Flash.png",
+    "2": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Dragon_Dive.png",
+    "3": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Dragon_Breath.png",
+    "4": "C:/Users/User/Desktop/evanskills/Skill_Dragon_Slam.png",
+    "5": "C:/Users/User/Desktop/evanskills/Skill_Elemental_Radiance.png",
+    "q": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Wind_Circle.png",
+    "w": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Thunder_Circle.png",
+    "e": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Earth_Circle.png",
+    "r": "C:/Users/User/Desktop/evanskills/Skill_Elemental_Barrage.png",
+    "c": "C:/Users/User/Desktop/evanskills/Skill_HEXA_Mana_Burst.png",
+    "s": "C:/Users/User/Desktop/evanskills/Skill_Return!.png"
+  },
+  "key_colors": {},
+  "fixed_lanes": {
+    "1": 0,
+    "2": 1,
+    "3": 2,
+    "4": 3,
+    "q": 5,
+    "5": 4,
+    "w": 6,
+    "e": 7,
+    "r": 8,
+    "c": 9,
+    "s": 10
+  },
+  "disabled_keys": [
+    "'",
+    ",",
+    ".",
+    "/",
+    ";",
+    "[",
+    "\\",
+    "]",
+    "`"
+  ],
+  "palette": [
+    "#4FC3F7",
+    "#FF6B9D",
+    "#FFD54F",
+    "#81C784",
+    "#BA68C8",
+    "#FF8A65",
+    "#4DB6AC",
+    "#F06292"
+  ],
+  "default_color": null,
+  "max_lanes": 12,
+  "show_stats": true,
+  "font_name": "microsoftjhenghei,msyh,arial",
+  "min_note_px": 18
+}
