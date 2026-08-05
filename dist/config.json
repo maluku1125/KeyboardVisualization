@@ -152,6 +152,7 @@
   ],
   "default_color": null,
   "max_lanes": 12,
+  "auto_record": false,
   "always_on_top": true,
   "show_now_line": false,
   "show_stats": true,

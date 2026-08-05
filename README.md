@@ -22,7 +22,19 @@ python key_visualizer.py --demo
 | F1 | 切換滑動方向(右→左 / 左→右) |
 | F2 | 重置統計 |
 | F3 | 開啟/關閉設定頁面 |
+| F4 | 開始/停止錄製(錄製中顯示紅點) |
 | ESC | 關閉設定頁面 / 離開 |
+
+## 錄製與譜面檢視器
+
+- **錄製**:F4 開始/停止,或在設定開「自動錄製」(啟動即錄,關閉程式自動存檔)。紀錄存在 `recordings/rec_日期時間.json`,包含所有按鍵事件、軌道、顏色、標籤與 base64 內嵌的按鍵圖片,單檔即可分享。
+- **檢視器**:`index.html` 是純靜態網頁,拖放或選擇紀錄檔即顯示全程譜面。支援滾輪縮放、拖曳平移、點擊定位、播放(空白鍵或按鈕,可調 0.5×~4×)、KPS 曲線與統計。
+
+### 放上 GitHub Pages
+
+1. 在 GitHub 建一個 repo,把 `index.html` 放到根目錄(檔名保持 index.html)。
+2. Repo → Settings → Pages → Source 選「Deploy from a branch」→ 選 main 分支 `/ (root)` → Save。
+3. 幾分鐘後網址 `https://<帳號>.github.io/<repo名>/` 就能開檢視器。頁面純前端,紀錄檔只在瀏覽器本機解析,不會上傳到任何伺服器。
 
 ## 設定頁面 (F3)
 

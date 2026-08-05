@@ -61,6 +61,7 @@ DEFAULT_CONFIG = {
     "palette": ["#4FC3F7", "#FF6B9D", "#FFD54F", "#81C784", "#BA68C8", "#FF8A65", "#4DB6AC", "#F06292"],
     "default_color": None,
     "max_lanes": 8,
+    "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
     "always_on_top": False,          # 視窗總是在最頂層(透明模式下強制開啟)
     "show_now_line": True,           # 畫面前緣的白色現在線
     "show_stats": True,
@@ -136,6 +137,9 @@ class KeyState:
         self.press_times = deque()
         self.total = 0
         self.max_kps = 0
+        self.recording = False
+        self.rec = []
+        self.rec_start = None
 
     def press(self, key, now):
         with self.lock:
@@ -145,6 +149,22 @@ class KeyState:
             self.active[key] = note
             self.press_times.append(now)
             self.total += 1
+            if self.recording:
+                self.rec.append(note)
+
+    def start_record(self, now):
+        with self.lock:
+            self.recording = True
+            self.rec = [n for n in self.active.values()]   # 按住中的鍵也算
+            self.rec_start = now
+
+    def stop_record(self):
+        with self.lock:
+            self.recording = False
+            notes, t0 = self.rec, self.rec_start
+            self.rec = []
+            self.rec_start = None
+            return notes, t0
 
     def release(self, key, now):
         with self.lock:
@@ -316,6 +336,11 @@ if IS_WIN:
         style = (style | WS_EX_LAYERED) if on else (style & ~WS_EX_LAYERED)
         _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
 
+    _user32.SetWindowPos.argtypes = [wintypes.HWND, ctypes.c_ssize_t,
+                                     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                     wintypes.UINT]
+    _user32.SetWindowPos.restype = wintypes.BOOL
+
     def win_set_topmost(hwnd, on):
         _user32.SetWindowPos(hwnd, HWND_TOPMOST if on else HWND_NOTOPMOST,
                              0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
@@ -377,6 +402,7 @@ SETTING_ITEMS = [
     {"id": "direction", "label": "滑動方向", "type": "choice", "choices": ["rtl", "ltr"],
      "names": {"rtl": "右 → 左", "ltr": "左 → 右"}},
     {"id": "scroll_speed", "label": "滑動速度", "type": "int", "min": 60, "max": 600, "step": 20},
+    {"id": "auto_record", "label": "自動錄製 (啟動即錄, F4 可切換)", "type": "bool"},
     {"id": "window_width", "label": "視窗寬度", "type": "int", "min": 320, "max": 3840, "step": 40},
     {"id": "window_height", "label": "視窗高度", "type": "int", "min": 160, "max": 2160, "step": 20},
     {"id": "always_on_top", "label": "總是在最頂層", "type": "bool"},
@@ -384,6 +410,71 @@ SETTING_ITEMS = [
     {"id": "show_stats", "label": "顯示統計列", "type": "bool"},
     {"id": "chroma_key", "label": "綠幕模式 (OBS 色度去背)", "type": "bool"},
 ]
+
+
+def save_recording(cfg, notes, t0, t1):
+    """把錄到的 note 存成自包含 JSON(含 base64 icon),回傳檔案路徑。"""
+    import base64
+    fixed = {k: int(v) for k, v in cfg.get("fixed_lanes", {}).items()}
+    events = []
+    used = set()
+    for n in sorted(notes, key=lambda n: n["start"]):
+        key = n["key"]
+        used.add(key)
+        lane = fixed.get(key, n.get("lane"))
+        end = n["end"] if n["end"] is not None else t1
+        events.append({"k": key,
+                       "s": max(0, int(round((n["start"] - t0) * 1000))),
+                       "e": max(0, int(round((end - t0) * 1000))),
+                       "l": int(lane) if lane is not None else 0})
+    # 最大 KPS(1 秒滑動窗)
+    times = [e["s"] for e in events]
+    max_kps = 0
+    j = 0
+    for i, t in enumerate(times):
+        while times[j] <= t - 1000:
+            j += 1
+        max_kps = max(max_kps, i - j + 1)
+    # 內嵌用到的 icon
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp"}
+    icons_b64 = {}
+    for k in used:
+        p = cfg["key_icons"].get(k)
+        if not p:
+            continue
+        fp = p if os.path.isabs(p) else os.path.join(SCRIPT_DIR, p)
+        try:
+            with open(fp, "rb") as f:
+                raw = f.read()
+            m = mime.get(os.path.splitext(fp)[1].lower(), "image/png")
+            icons_b64[k] = f"data:{m};base64," + base64.b64encode(raw).decode()
+        except Exception as e:
+            print(f"[warn] 錄製內嵌 icon 失敗 {p}: {e}")
+    rec = {
+        "version": 1,
+        "app": "Key Visualizer",
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_ms": max(1, int(round((t1 - t0) * 1000))),
+        "direction": cfg["direction"],
+        "max_lanes": int(cfg["max_lanes"]),
+        "palette": cfg["palette"],
+        "default_color": cfg["default_color"],
+        "key_colors": cfg["key_colors"],
+        "key_labels": cfg["key_labels"],
+        "fixed_lanes": fixed,
+        "total": len(events),
+        "max_kps": max_kps,
+        "events": events,
+        "icons": icons_b64,
+    }
+    d = os.path.join(SCRIPT_DIR, "recordings")
+    os.makedirs(d, exist_ok=True)
+    fn = os.path.join(d, time.strftime("rec_%Y%m%d_%H%M%S") + ".json")
+    with open(fn, "w", encoding="utf-8") as f:
+        json.dump(rec, f, ensure_ascii=False)
+    print(f"[info] 錄製已儲存: {fn}")
+    return fn
 
 
 def value_text(cfg, item):
@@ -430,9 +521,19 @@ def main():
             print("        可先用  python key_visualizer.py --demo  預覽效果")
             return
 
+    exit_after = None          # 測試用 --exit-after N
+    if "--exit-after" in sys.argv:
+        try:
+            exit_after = float(sys.argv[sys.argv.index("--exit-after") + 1])
+        except (IndexError, ValueError):
+            pass
+    app_start = time.time()
+    if cfg["auto_record"] or "--record" in sys.argv:
+        state.start_record(app_start)
+
     pygame.init()
     W, H = int(cfg["window_width"]), int(cfg["window_height"])
-    pygame.display.set_caption("Key Visualizer  |  F1 方向  F2 重置  F3 設定  ESC 離開")
+    pygame.display.set_caption("Key Visualizer  |  F1 方向  F2 重置  F3 設定  F4 錄製  ESC 離開")
     clock = pygame.time.Clock()
 
     display = None
@@ -606,6 +707,7 @@ def main():
     drag = None            # (cursor_x0, cursor_y0, win_x0, win_y0)
 
     all_keys_order = list(ALL_KEYS)
+    frame_count = 0
 
     running = True
     while running:
@@ -629,6 +731,13 @@ def main():
                     state.reset_stats()
                 elif ev.key == pygame.K_F3:
                     settings_open = not settings_open
+                elif ev.key == pygame.K_F4:
+                    if state.recording:
+                        notes, t0 = state.stop_record()
+                        if notes:
+                            save_recording(cfg, notes, t0, time.time())
+                    else:
+                        state.start_record(time.time())
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 clicked = False
                 if settings_open:
@@ -677,11 +786,22 @@ def main():
             screen.fill(bg)
 
         # ── 統計列 ──
+        stats_w = 0
         if cfg["show_stats"]:
             stats = f"KPS {kps:>2}   MAX {max_kps:>2}   TOTAL {total}"
-            screen.blit(font_big.render(stats, True, (240, 240, 245)), (12, 10))
+            stats_surf = font_big.render(stats, True, (240, 240, 245))
+            screen.blit(stats_surf, (12, 10))
+            stats_w = 12 + stats_surf.get_width()
             hint = font.render("F3 設定", True, (150, 150, 170))
             screen.blit(hint, (W - hint.get_width() - 12, 4))
+        if state.recording:
+            rec_y = 20 if cfg["show_stats"] else 14
+            rx = (stats_w + 30) if cfg["show_stats"] else 14
+            pygame.draw.circle(screen, (255, 70, 70), (rx, rec_y), 6)
+            el = int(now - (state.rec_start or now))
+            rec_s = font.render(f"REC {el // 60:02d}:{el % 60:02d}", True, (255, 120, 120))
+            screen.blit(rec_s, (rx + 12, rec_y - rec_s.get_height() // 2))
+        if cfg["show_stats"]:
             if held:
                 held_txt = "  ".join(label_of(k) for k in held[:10])
                 surf = font.render(held_txt, True, (150, 220, 255))
@@ -897,7 +1017,17 @@ def main():
         else:
             pygame.display.flip()
         clock.tick(60)
+        # 每 2 秒重新宣告一次置頂,避免被其他視窗搶走層級
+        frame_count += 1
+        if IS_WIN and frame_count % 120 == 0 and (layered or cfg["always_on_top"]):
+            win_set_topmost(hwnd, True)
+        if exit_after is not None and (now - app_start) > exit_after:
+            running = False
 
+    if state.recording:
+        notes, t0 = state.stop_record()
+        if notes:
+            save_recording(cfg, notes, t0, time.time())
     pygame.quit()
 
 

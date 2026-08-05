@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Key Visualizer 譜面檢視器</title>
+<style>
+  :root {
+    --bg: #0e0e16; --panel: #16161f; --line: #2a2a3a;
+    --text: #eaeaf0; --dim: #8a8aa0; --accent: #4fc3f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "Microsoft JhengHei", "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin-right: 6px; white-space: nowrap; }
+  .btn { background: #2a2a3d; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+  .btn:hover { background: #34344c; }
+  .btn.primary { background: #1c4a63; border-color: #2d6a8a; }
+  select { background: #2a2a3d; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+  #stats { display: flex; gap: 14px; font-size: 13px; color: var(--dim); margin-left: auto; white-space: nowrap; }
+  #stats b { color: var(--text); }
+  #wrap { flex: 1; position: relative; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  #drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; background: rgba(14,14,22,.92); z-index: 10; }
+  #drop.hidden { display: none; }
+  #drop .zone { border: 2px dashed #3a3a55; border-radius: 14px; padding: 48px 64px; text-align: center; color: var(--dim); font-size: 15px; cursor: pointer; transition: .15s; }
+  #drop .zone:hover, #drop .zone.over { border-color: var(--accent); color: var(--text); }
+  #drop .zone b { color: var(--text); font-size: 18px; display: block; margin-bottom: 8px; }
+  #err { color: #ff8080; font-size: 13px; }
+  input[type=file] { display: none; }
+  .hint { font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Key Visualizer 譜面檢視器</h1>
+  <button class="btn" id="openBtn">開啟紀錄檔</button>
+  <button class="btn" id="fitBtn">全覽</button>
+  <button class="btn primary" id="playBtn">▶ 播放</button>
+  <select id="speedSel">
+    <option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option>
+    <option value="2">2×</option>
+    <option value="4">4×</option>
+  </select>
+  <span class="hint">滾輪縮放.拖曳平移.點擊定位</span>
+  <div id="stats"></div>
+</header>
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="drop">
+    <div class="zone" id="zone">
+      <b>拖放紀錄檔到這裡</b>
+      或點擊選擇檔案(key_visualizer 錄製的 rec_*.json)
+    </div>
+    <div id="err"></div>
+  </div>
+</div>
+<input type="file" id="fileInput" accept=".json,application/json">
+<script>
+"use strict";
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const drop = document.getElementById("drop");
+const zone = document.getElementById("zone");
+const errEl = document.getElementById("err");
+const fileInput = document.getElementById("fileInput");
+const statsEl = document.getElementById("stats");
+const playBtn = document.getElementById("playBtn");
+const speedSel = document.getElementById("speedSel");
+
+const PAD_L = 16, RULER_H = 26, KPS_H = 64;
+let data = null, images = {}, nLanes = 4;
+let pxPerMs = 0.15, leftMs = 0;      // 檢視範圍
+let playing = false, playT = 0, lastFrame = 0;
+let kpsSeries = [], kpsMax = 1;
+let dragging = false, dragX = 0, dragLeft = 0, moved = false;
+let dpr = 1;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  const r = cv.parentElement.getBoundingClientRect();
+  cv.width = Math.max(1, r.width * dpr);
+  cv.height = Math.max(1, r.height * dpr);
+  draw();
+}
+window.addEventListener("resize", resize);
+
+function viewW() { return cv.width / dpr; }
+function viewH() { return cv.height / dpr; }
+function timeToX(t) { return PAD_L + (t - leftMs) * pxPerMs; }
+function xToTime(x) { return leftMs + (x - PAD_L) / pxPerMs; }
+
+function fmtTime(ms) {
+  const s = ms / 1000;
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}` : s.toFixed(1) + "s";
+}
+
+function colorOf(key, lane) {
+  if (data.key_colors && data.key_colors[key]) return data.key_colors[key];
+  if (data.default_color) return data.default_color;
+  const p = data.palette || ["#4FC3F7"];
+  return p[lane % p.length];
+}
+function labelOf(key) {
+  return (data.key_labels && data.key_labels[key]) || (key.length === 1 ? key.toUpperCase() : key.toUpperCase());
+}
+
+function load(json) {
+  if (!json || !Array.isArray(json.events)) throw new Error("不是有效的 Key Visualizer 紀錄檔");
+  data = json;
+  images = {};
+  for (const [k, url] of Object.entries(json.icons || {})) {
+    const img = new Image();
+    img.onload = () => draw();
+    img.src = url;
+    images[k] = img;
+  }
+  nLanes = Math.max(json.max_lanes || 1, ...json.events.map(e => (e.l || 0) + 1), 1);
+  // KPS 序列(每 250ms 取樣,1 秒滑動窗)
+  const dur = json.duration_ms;
+  const times = json.events.map(e => e.s).sort((a, b) => a - b);
+  kpsSeries = [];
+  kpsMax = 1;
+  let j0 = 0, j1 = 0;
+  for (let t = 0; t <= dur; t += 250) {
+    while (j1 < times.length && times[j1] <= t) j1++;
+    while (j0 < times.length && times[j0] <= t - 1000) j0++;
+    const v = j1 - j0;
+    kpsSeries.push(v);
+    if (v > kpsMax) kpsMax = v;
+  }
+  playing = false; playT = 0;
+  playBtn.textContent = "▶ 播放";
+  statsEl.innerHTML =
+    `<span>時長 <b>${fmtTime(dur)}</b></span>` +
+    `<span>總按鍵 <b>${json.total}</b></span>` +
+    `<span>最大 KPS <b>${json.max_kps}</b></span>` +
+    `<span>平均 KPS <b>${(json.total / (dur / 1000)).toFixed(1)}</b></span>`;
+  drop.classList.add("hidden");
+  fit();
+}
+
+function fit() {
+  if (!data) return;
+  pxPerMs = (viewW() - PAD_L * 2) / data.duration_ms;
+  leftMs = 0;
+  draw();
+}
+
+function niceStep(targetPx) {
+  const targetMs = targetPx / pxPerMs;
+  const steps = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, 60000, 300000];
+  for (const s of steps) if (s >= targetMs) return s;
+  return 600000;
+}
+
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = viewW(), H = viewH();
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#0e0e16";
+  ctx.fillRect(0, 0, W, H);
+  if (!data) return;
+
+  const laneTop = RULER_H;
+  const laneAreaH = H - RULER_H - KPS_H - 8;
+  const laneH = laneAreaH / nLanes;
+  const noteH = Math.max(8, laneH * 0.72);
+
+  // 軌道底色
+  for (let i = 0; i < nLanes; i++) {
+    if (i % 2 === 1) {
+      ctx.fillStyle = "rgba(255,255,255,0.025)";
+      ctx.fillRect(0, laneTop + i * laneH, W, laneH);
+    }
+  }
+
+  // 時間刻度
+  const step = niceStep(90);
+  const t0 = Math.max(0, Math.floor(leftMs / step) * step);
+  const tEnd = Math.min(data.duration_ms, xToTime(W));
+  ctx.font = "11px sans-serif";
+  ctx.textBaseline = "top";
+  for (let t = t0; t <= tEnd; t += step) {
+    const x = timeToX(t);
+    ctx.strokeStyle = "#23233200";
+    ctx.strokeStyle = "#252538";
+    ctx.beginPath(); ctx.moveTo(x, RULER_H); ctx.lineTo(x, H - KPS_H); ctx.stroke();
+    ctx.fillStyle = "#8a8aa0";
+    ctx.fillText(fmtTime(t), x + 3, 7);
+  }
+
+  // note
+  const minPx = 14;
+  for (const e of data.events) {
+    const x0 = timeToX(e.s);
+    let x1 = timeToX(e.e);
+    if (x1 - x0 < minPx) x1 = x0 + minPx;
+    if (x1 < 0 || x0 > W) continue;
+    const lane = e.l || 0;
+    const y = laneTop + lane * laneH + (laneH - noteH) / 2;
+    const r = Math.min(8, noteH / 2.5);
+    ctx.fillStyle = colorOf(e.k, lane);
+    roundRect(x0, y, x1 - x0, noteH, r);
+    ctx.fill();
+    const img = images[e.k];
+    if (img && img.complete && img.naturalWidth > 0) {
+      // 填滿方形 + 圓角裁切(cover)
+      const side = noteH;
+      ctx.save();
+      roundRect(x0, y, side, noteH, r);
+      ctx.clip();
+      const sc = Math.max(side / img.naturalWidth, noteH / img.naturalHeight);
+      const dw = img.naturalWidth * sc, dh = img.naturalHeight * sc;
+      ctx.drawImage(img, x0 + (side - dw) / 2, y + (noteH - dh) / 2, dw, dh);
+      ctx.restore();
+    } else if (noteH >= 12) {
+      const lbl = labelOf(e.k);
+      ctx.font = `${Math.min(13, noteH - 4)}px "Microsoft JhengHei", sans-serif`;
+      const tw = ctx.measureText(lbl).width;
+      if (tw <= x1 - x0 - 6) {
+        ctx.fillStyle = "#0f0f14";
+        ctx.textBaseline = "middle";
+        ctx.fillText(lbl, x0 + 5, y + noteH / 2 + 1);
+        ctx.textBaseline = "top";
+      }
+    }
+  }
+
+  // KPS 曲線
+  const ky = H - KPS_H;
+  ctx.strokeStyle = "#2a2a3a";
+  ctx.beginPath(); ctx.moveTo(0, ky); ctx.lineTo(W, ky); ctx.stroke();
+  ctx.fillStyle = "#8a8aa0";
+  ctx.font = "11px sans-serif";
+  ctx.fillText(`KPS (max ${data.max_kps})`, PAD_L, ky + 4);
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < kpsSeries.length; i++) {
+    const t = i * 250;
+    const x = timeToX(t);
+    if (x < -10 || x > W + 10) { continue; }
+    const y = H - 6 - (kpsSeries[i] / kpsMax) * (KPS_H - 26);
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = "#4fc3f7";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  // 播放游標
+  if (playT > 0 || playing) {
+    const x = timeToX(playT);
+    if (x >= 0 && x <= W) {
+      ctx.strokeStyle = "#ff5c5c";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, RULER_H); ctx.lineTo(x, H - 6); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "#ff5c5c";
+      ctx.fillText(fmtTime(playT), Math.min(x + 5, W - 50), RULER_H + 2);
+    }
+  }
+}
+
+// ── 互動 ──
+cv.addEventListener("wheel", ev => {
+  if (!data) return;
+  ev.preventDefault();
+  const mx = ev.offsetX;
+  const tAt = xToTime(mx);
+  const factor = Math.pow(1.0015, -ev.deltaY);
+  pxPerMs = Math.min(2, Math.max((viewW() - 40) / (data.duration_ms * 4), pxPerMs * factor));
+  leftMs = tAt - (mx - PAD_L) / pxPerMs;
+  draw();
+}, { passive: false });
+
+cv.addEventListener("mousedown", ev => {
+  dragging = true; moved = false;
+  dragX = ev.clientX; dragLeft = leftMs;
+  cv.classList.add("dragging");
+});
+window.addEventListener("mousemove", ev => {
+  if (!dragging) return;
+  const dx = ev.clientX - dragX;
+  if (Math.abs(dx) > 3) moved = true;
+  leftMs = dragLeft - dx / pxPerMs;
+  draw();
+});
+window.addEventListener("mouseup", ev => {
+  if (dragging && !moved && data && ev.target === cv) {
+    playT = Math.max(0, Math.min(data.duration_ms, xToTime(ev.offsetX)));
+    draw();
+  }
+  dragging = false;
+  cv.classList.remove("dragging");
+});
+
+// ── 播放 ──
+function tick(ts) {
+  if (!playing) return;
+  const dt = ts - lastFrame;
+  lastFrame = ts;
+  playT += dt * parseFloat(speedSel.value);
+  if (playT >= data.duration_ms) {
+    playT = data.duration_ms;
+    setPlaying(false);
+  }
+  // 游標超出視野時自動平移
+  const x = timeToX(playT);
+  if (x > viewW() * 0.85 || x < 0) leftMs = playT - (viewW() * 0.15) / pxPerMs;
+  draw();
+  if (playing) requestAnimationFrame(tick);
+}
+function setPlaying(p) {
+  if (!data) return;
+  playing = p;
+  playBtn.textContent = p ? "⏸ 暫停" : "▶ 播放";
+  if (p) {
+    if (playT >= data.duration_ms) playT = 0;
+    lastFrame = performance.now();
+    requestAnimationFrame(tick);
+  } else draw();
+}
+playBtn.addEventListener("click", () => setPlaying(!playing));
+document.getElementById("fitBtn").addEventListener("click", fit);
+document.getElementById("openBtn").addEventListener("click", () => fileInput.click());
+window.addEventListener("keydown", ev => {
+  if (ev.code === "Space" && data) { ev.preventDefault(); setPlaying(!playing); }
+});
+
+// ── 載入檔案 ──
+function readFile(file) {
+  errEl.textContent = "";
+  const fr = new FileReader();
+  fr.onload = () => {
+    try { load(JSON.parse(fr.result)); }
+    catch (e) { errEl.textContent = "讀取失敗:" + e.message; drop.classList.remove("hidden"); }
+  };
+  fr.readAsText(file);
+}
+zone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) readFile(fileInput.files[0]); });
+for (const el of [drop, zone, document.body]) {
+  el.addEventListener("dragover", ev => { ev.preventDefault(); zone.classList.add("over"); });
+  el.addEventListener("dragleave", () => zone.classList.remove("over"));
+  el.addEventListener("drop", ev => {
+    ev.preventDefault();
+    zone.classList.remove("over");
+    drop.classList.remove("hidden");
+    if (ev.dataTransfer.files[0]) readFile(ev.dataTransfer.files[0]);
+  });
+}
+
+resize();
+</script>
+</body>
+</html>
