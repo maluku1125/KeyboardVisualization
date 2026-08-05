@@ -792,7 +792,7 @@ def main():
             stats_surf = font_big.render(stats, True, (240, 240, 245))
             screen.blit(stats_surf, (12, 10))
             stats_w = 12 + stats_surf.get_width()
-            hint = font.render("F3 設定", True, (150, 150, 170))
+            hint = font.render("F3 設定  F4 錄製", True, (150, 150, 170))
             screen.blit(hint, (W - hint.get_width() - 12, 4))
         if state.recording:
             rec_y = 20 if cfg["show_stats"] else 14
