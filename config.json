@@ -1,12 +1,12 @@
 {
   "direction": "rtl",
-  "window_width": 960,
-  "window_height": 340,
+  "window_width": 1040,
+  "window_height": 520,
   "background_color": "#0e0e16",
-  "background_opacity": 0.75,
+  "background_opacity": 0.6,
   "chroma_key": false,
   "chroma_color": "#00FF00",
-  "scroll_speed": 120,
+  "scroll_speed": 60,
   "show_hold": false,
   "track_all_keys": true,
   "tracked_keys": [
@@ -152,6 +152,8 @@
   ],
   "default_color": null,
   "max_lanes": 12,
+  "always_on_top": true,
+  "show_now_line": false,
   "show_stats": true,
   "font_name": "microsoftjhenghei,msyh,arial",
   "min_note_px": 18

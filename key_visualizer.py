@@ -61,6 +61,8 @@ DEFAULT_CONFIG = {
     "palette": ["#4FC3F7", "#FF6B9D", "#FFD54F", "#81C784", "#BA68C8", "#FF8A65", "#4DB6AC", "#F06292"],
     "default_color": None,
     "max_lanes": 8,
+    "always_on_top": False,          # 視窗總是在最頂層(透明模式下強制開啟)
+    "show_now_line": True,           # 畫面前緣的白色現在線
     "show_stats": True,
     "font_name": "microsoftjhenghei,msyh,arial",
     "min_note_px": 18
@@ -375,6 +377,10 @@ SETTING_ITEMS = [
     {"id": "direction", "label": "滑動方向", "type": "choice", "choices": ["rtl", "ltr"],
      "names": {"rtl": "右 → 左", "ltr": "左 → 右"}},
     {"id": "scroll_speed", "label": "滑動速度", "type": "int", "min": 60, "max": 600, "step": 20},
+    {"id": "window_width", "label": "視窗寬度", "type": "int", "min": 320, "max": 3840, "step": 40},
+    {"id": "window_height", "label": "視窗高度", "type": "int", "min": 160, "max": 2160, "step": 20},
+    {"id": "always_on_top", "label": "總是在最頂層", "type": "bool"},
+    {"id": "show_now_line", "label": "顯示現在線 (前緣白線)", "type": "bool"},
     {"id": "show_stats", "label": "顯示統計列", "type": "bool"},
     {"id": "chroma_key", "label": "綠幕模式 (OBS 色度去背)", "type": "bool"},
 ]
@@ -442,7 +448,16 @@ def main():
         if IS_WIN:
             hwnd = win_get_hwnd()
             win_set_layered(hwnd, layered)
-            win_set_topmost(hwnd, layered)
+            win_set_topmost(hwnd, layered or cfg["always_on_top"])
+            # 移除 Windows 11 在無邊框視窗上畫的外框線與圓角
+            try:
+                dwm = ctypes.windll.dwmapi
+                corner = ctypes.c_int(1 if layered else 0)   # 1 = DWMWCP_DONOTROUND
+                dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), 4)
+                border = ctypes.c_uint(0xFFFFFFFE if layered else 0xFFFFFFFF)  # NONE / DEFAULT
+                dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(border), 4)
+            except Exception:
+                pass
 
     setup_window(cfg["background_opacity"] < 0.999)
 
@@ -511,6 +526,12 @@ def main():
             want = cfg["background_opacity"] < 0.999
             if want != layered:
                 setup_window(want)
+        if item_id == "always_on_top" and IS_WIN:
+            win_set_topmost(hwnd, layered or cfg["always_on_top"])
+        if item_id in ("window_width", "window_height"):
+            nonlocal W, H
+            W, H = int(cfg["window_width"]), int(cfg["window_height"])
+            setup_window(layered)
         save_config(cfg)
 
     def color_of(key, lane):
@@ -526,11 +547,26 @@ def main():
     # ── 按鍵頁動作 ──
     def choose_icon(key):
         path = pick_image_file()
-        if path and load_icon(key, path):
-            cfg["key_icons"][key] = path
+        if not path:
+            return
+        # 統一先裁邊、存成 png 到 icons/,之後每次啟動載入的都是同一張處理過的圖
+        try:
+            img = pygame.image.load(path).convert_alpha()
+            br = img.get_bounding_rect(min_alpha=8)
+            if br.w > 0 and br.h > 0:
+                img = img.subsurface(br).copy()
+            icons_dir = os.path.join(SCRIPT_DIR, "icons")
+            os.makedirs(icons_dir, exist_ok=True)
+            safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in key) or "key"
+            out_rel = os.path.join("icons", f"{safe}.png")
+            pygame.image.save(img, os.path.join(SCRIPT_DIR, out_rel))
+            icons[key] = img
+            cfg["key_icons"][key] = out_rel
             icon_cache.pop(key, None)
             thumb_cache.pop(key, None)
             save_config(cfg)
+        except Exception as e:
+            print(f"[warn] icon 處理失敗 {path}: {e}")
 
     def clear_icon(key):
         cfg["key_icons"].pop(key, None)
@@ -578,6 +614,8 @@ def main():
                 running = False
             elif ev.type == pygame.VIDEORESIZE and not layered:
                 W, H = ev.w, ev.h
+                cfg["window_width"], cfg["window_height"] = W, H
+                save_config(cfg)
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     if settings_open:
@@ -605,7 +643,7 @@ def main():
                     drag = (cx, cy, wx, wy)
             elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
                 drag = None
-            elif ev.type == pygame.MOUSEWHEEL and settings_open and settings_page == "keys":
+            elif ev.type == pygame.MOUSEWHEEL and settings_open:
                 key_scroll = max(0, key_scroll - ev.y)
 
         if drag and IS_WIN:
@@ -725,19 +763,21 @@ def main():
                     screen.blit(surf, (lx, r.centery - surf.get_height() // 2))
 
         # ── 現在線 ──
-        edge_x = W - 1 if direction == "rtl" else 1
-        pygame.draw.line(screen, (255, 255, 255), (edge_x, top), (edge_x, H - 6), 2)
+        if cfg["show_now_line"]:
+            edge_x = W - 1 if direction == "rtl" else 1
+            pygame.draw.line(screen, (255, 255, 255), (edge_x, top), (edge_x, H - 6), 2)
 
         # ── 設定頁面 ──
         hit_rects = []
         if settings_open:
             pw = 560
-            visible_rows = 9
             row_h = 38
+            visible_rows = max(3, (H - 120) // row_h)
             known_keys = all_keys_order + sorted(
                 (set(cfg["key_icons"]) | set(cfg["fixed_lanes"]) | set(cfg["disabled_keys"])
                  | set(lanes.last_used)) - set(all_keys_order))
-            n_rows = len(SETTING_ITEMS) if settings_page == "general" else visible_rows
+            page_items = SETTING_ITEMS if settings_page == "general" else known_keys
+            n_rows = min(visible_rows, len(page_items))
             ph = row_h * n_rows + 96
             px, py = (W - pw) // 2, max(8, (H - ph) // 2)
             panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
@@ -765,7 +805,14 @@ def main():
             body_y = py + 50
 
             if settings_page == "general":
-                for idx, item in enumerate(SETTING_ITEMS):
+                max_scroll_g = max(0, len(SETTING_ITEMS) - visible_rows)
+                key_scroll = min(key_scroll, max_scroll_g)
+                shown_items = SETTING_ITEMS[key_scroll:key_scroll + visible_rows]
+                if max_scroll_g > 0:
+                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_items)} / {len(SETTING_ITEMS)}  (滾輪捲動)",
+                                         True, (140, 140, 160))
+                    screen.blit(sc_txt, (px + pw - sc_txt.get_width() - 16, py + 16))
+                for idx, item in enumerate(shown_items):
                     ry = body_y + idx * row_h
                     screen.blit(font.render(item["label"], True, (210, 210, 220)), (px + 16, ry + 8))
                     val = font.render(value_text(cfg, item), True, (150, 220, 255))
