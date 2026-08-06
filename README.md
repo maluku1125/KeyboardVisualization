@@ -1,19 +1,6 @@
 # Key Visualizer — 實況用即時按鍵可視化
 
-按下的按鍵會以圓角方形沿時間軸滑動(像音遊譜面),長按會拉長,並顯示 KPS 統計。使用全域鍵盤監聽,遊戲視窗在前景時也能捕捉按鍵。
-
-## 安裝與執行
-
-```
-pip install -r requirements.txt
-python key_visualizer.py
-```
-
-先看效果(自動模擬按鍵):
-
-```
-python key_visualizer.py --demo
-```
+按下的按鍵會以圓角方形沿時間軸滑動,長按會拉長,並顯示 KPS 統計。使用全域鍵盤監聽,遊戲視窗在前景時也能捕捉按鍵。
 
 ## 視窗內快捷鍵
 
@@ -30,11 +17,6 @@ python key_visualizer.py --demo
 - **錄製**:F4 開始/停止,或在設定開「自動錄製」(啟動即錄,關閉程式自動存檔)。紀錄存在 `recordings/rec_日期時間.json`,包含所有按鍵事件、軌道、顏色、標籤與 base64 內嵌的按鍵圖片,單檔即可分享。
 - **檢視器**:`index.html` 是純靜態網頁,拖放或選擇紀錄檔即顯示全程譜面。支援滾輪縮放、拖曳平移、點擊定位、播放(空白鍵或按鈕,可調 0.5×~4×)、KPS 曲線與統計。
 
-### 放上 GitHub Pages
-
-1. 在 GitHub 建一個 repo,把 `index.html` 放到根目錄(檔名保持 index.html)。
-2. Repo → Settings → Pages → Source 選「Deploy from a branch」→ 選 main 分支 `/ (root)` → Save。
-3. 幾分鐘後網址 `https://<帳號>.github.io/<repo名>/` 就能開檢視器。頁面純前端,紀錄檔只在瀏覽器本機解析,不會上傳到任何伺服器。
 
 ## 設定頁面 (F3)
 
@@ -46,11 +28,6 @@ python key_visualizer.py --demo
 ## 背景透明(僅 Windows)
 
 「背景透明度」只影響背景,按鍵方塊保持不透明。調到 100% 以下會切換成無邊框、置頂的覆蓋視窗,可直接疊在遊戲畫面上,用滑鼠左鍵拖曳移動;0% 時背景完全穿透只剩按鍵。要調整設定按 F3(視窗需在焦點,可先點一下按鍵方塊或工作列圖示)。
-
-## OBS 使用方式
-
-1. 來源 → 視窗擷取 → 選 Key Visualizer 視窗。
-2. 想去背:把 `config.json` 的 `chroma_key` 改成 `true`,背景會變綠色,再在 OBS 加「色度鍵」濾鏡即可。
 
 ## config.json 設定
 
