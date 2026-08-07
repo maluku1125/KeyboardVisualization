@@ -64,6 +64,8 @@ DEFAULT_CONFIG = {
     "default_color": None,
     "max_lanes": 8,
     "track_mouse": True,             # 偵測滑鼠按鍵(左/右/中/側鍵)
+    "low_latency": True,             # 低延遲模式:輪詢取代 hook,不影響遊戲輸入(僅 Windows)
+    "fps_limit": 60,                 # 畫面更新率上限
     "click_through": False,          # 點擊穿透(僅透明模式,全域 F8 切換)
     "lock_keys": True,               # 鎖定:非設定頁面開啟時,不自動新增按鍵軌道
     "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
@@ -482,6 +484,27 @@ if IS_WIN:
     def win_move_window(hwnd, x, y):
         _user32.SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | 0x4)
 
+    # 低延遲模式:GetAsyncKeyState 輪詢用的 VK 對照表
+    VK_MAP = {}
+    for i in range(26):
+        VK_MAP[0x41 + i] = chr(ord("a") + i)
+    for i in range(10):
+        VK_MAP[0x30 + i] = str(i)
+    for i in range(12):
+        VK_MAP[0x70 + i] = f"f{i + 1}"
+    VK_MAP.update({
+        0x20: "space", 0x0D: "enter", 0x10: "shift", 0x11: "ctrl", 0x12: "alt",
+        0x09: "tab", 0x1B: "esc", 0x08: "backspace", 0x14: "caps_lock",
+        0x2D: "insert", 0x2E: "delete", 0x24: "home", 0x23: "end",
+        0x21: "page_up", 0x22: "page_down",
+        0x26: "up", 0x28: "down", 0x25: "left", 0x27: "right",
+        0xBA: ";", 0xBB: "=", 0xBC: ",", 0xBD: "-", 0xBE: ".", 0xBF: "/",
+        0xC0: "`", 0xDB: "[", 0xDC: "\\", 0xDD: "]", 0xDE: "'",
+        0x01: "m_left", 0x02: "m_right", 0x04: "m_middle", 0x05: "m_x1", 0x06: "m_x2",
+    })
+
+    _GetAsyncKeyState = _user32.GetAsyncKeyState
+
     def win_layered_update(hwnd, surf):
         """把 SRCALPHA surface 推上分層視窗(premultiplied ARGB)。"""
         w, h = surf.get_size()
@@ -528,6 +551,8 @@ SETTING_ITEMS = [
      "type": "pct", "min": 0.0, "max": 1.0, "step": 0.05},
     {"id": "show_hold", "label": {"zh": "顯示按壓長度 (關=正方形)", "en": "Hold length (off = square)"}, "type": "bool"},
     {"id": "track_mouse", "label": {"zh": "偵測滑鼠按鍵", "en": "Track mouse buttons"}, "type": "bool"},
+    {"id": "low_latency", "label": {"zh": "低延遲模式 (輪詢, 不影響遊戲輸入)", "en": "Low-latency mode (polling)"}, "type": "bool"},
+    {"id": "fps_limit", "label": {"zh": "畫面更新率上限 (FPS)", "en": "FPS limit"}, "type": "int", "min": 30, "max": 240, "step": 30},
     {"id": "click_through", "label": {"zh": "點擊穿透 (透明模式, F8 切換)", "en": "Click-through (F8 toggles)"}, "type": "bool"},
     {"id": "lock_keys", "label": {"zh": "鎖定按鍵 (只在設定開啟時新增)", "en": "Lock keys (add only in settings)"}, "type": "bool"},
     {"id": "direction", "label": {"zh": "滑動方向", "en": "Scroll direction"}, "type": "choice",
@@ -651,19 +676,38 @@ def main():
 
     state = KeyState()
     state.disabled = set(cfg["disabled_keys"])
-    if demo:
-        start_demo(state)
-    else:
-        try:
-            start_listener(state)
-        except Exception as e:
-            print(f"[error] 無法啟動全域鍵盤監聽: {e}")
-            print("        可先用  python key_visualizer.py --demo  預覽效果")
+    hooks = []                     # pynput listener 物件
+
+    def start_hooks():
+        if hooks:
             return
         try:
-            start_mouse_listener(state, cfg)
+            hooks.append(start_listener(state))
+        except Exception as e:
+            print(f"[error] 無法啟動全域鍵盤監聽: {e}")
+        try:
+            hooks.append(start_mouse_listener(state, cfg))
         except Exception as e:
             print(f"[warn] 無法啟動滑鼠監聽: {e}")
+
+    def stop_hooks():
+        for l in hooks:
+            try:
+                l.stop()
+            except Exception:
+                pass
+        hooks.clear()
+
+    def polling_mode():
+        return IS_WIN and cfg["low_latency"] and not demo
+
+    if demo:
+        start_demo(state)
+    elif not polling_mode():
+        start_hooks()
+        if not hooks:
+            print("        可先用  python key_visualizer.py --demo  預覽效果")
+            return
 
     exit_after = None          # 測試用 --exit-after N
     if "--exit-after" in sys.argv:
@@ -777,6 +821,11 @@ def main():
             win_set_topmost(hwnd, layered or cfg["always_on_top"])
         if item_id == "language":
             pygame.display.set_caption(tr(cfg, "caption"))
+        if item_id == "low_latency" and not demo:
+            if polling_mode():
+                stop_hooks()
+            else:
+                start_hooks()
         if item_id in ("window_width", "window_height"):
             nonlocal W, H
             W, H = int(cfg["window_width"]), int(cfg["window_height"])
@@ -903,6 +952,7 @@ def main():
 
     all_keys_order = list(ALL_KEYS)
     frame_count = 0
+    poll_prev = set()
 
     running = True
     while running:
@@ -971,6 +1021,28 @@ def main():
                 ct_active = want_ct
 
         now = time.time()
+
+        # ── 低延遲模式:輪詢按鍵狀態(不掛 hook,零輸入延遲)──
+        if polling_mode():
+            pressed_now = set()
+            mouse_off = not cfg["track_mouse"]
+            for vk, name in VK_MAP.items():
+                if mouse_off and vk <= 0x06:
+                    continue
+                if _GetAsyncKeyState(vk) & 0x8000:
+                    pressed_now.add(name)
+            for name in pressed_now - poll_prev:
+                if name == "f8":
+                    state.req_clickthrough = True
+                state.press(name, now)
+            for name in poll_prev - pressed_now:
+                state.release(name, now)
+            poll_prev = pressed_now
+        elif poll_prev:
+            for name in poll_prev:
+                state.release(name, now)
+            poll_prev = set()
+
         top = 46 if cfg["show_stats"] else 8
         lane_area = H - top - 8
         lane_h = lane_area / lanes.max_lanes
@@ -1277,7 +1349,7 @@ def main():
             win_layered_update(hwnd, screen)
         else:
             pygame.display.flip()
-        clock.tick(60)
+        clock.tick(max(30, int(cfg["fps_limit"])))
         # 每 2 秒重新宣告一次置頂,避免被其他視窗搶走層級
         frame_count += 1
         if IS_WIN and frame_count % 120 == 0 and (layered or cfg["always_on_top"]):

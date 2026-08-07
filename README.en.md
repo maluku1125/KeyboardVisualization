@@ -40,6 +40,10 @@ In transparent mode, press F8 and mouse clicks pass straight through the overlay
 
 Plain window capture works. For a clean cutout, enable chroma-key mode and add a Color Key filter, or simply use the transparent overlay mode on top of your scene.
 
+## Performance & Input Latency
+
+"**Low-latency mode**" is on by default: key states are read by polling, with no system hooks installed — the program is completely outside the game's input path and **adds zero key latency**. The trade-off: taps shorter than one frame (~16 ms at 60 fps) may be missed. Turning it off switches to global hooks, which give the most precise timing (best for chart recording) but route every key event through this program before it reaches the game, potentially adding a few milliseconds under load. "FPS limit" (30–240) lowers CPU usage when reduced.
+
 ## Notes
 
 - Some anti-cheat systems may block global input hooks. Exclusive-fullscreen games cannot be overlaid — switch the game to borderless windowed mode.

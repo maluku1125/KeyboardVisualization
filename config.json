@@ -160,6 +160,8 @@
   "default_color": null,
   "max_lanes": 12,
   "track_mouse": true,
+  "low_latency": true,
+  "fps_limit": 90,
   "click_through": false,
   "lock_keys": true,
   "auto_record": false,
