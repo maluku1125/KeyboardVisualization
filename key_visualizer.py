@@ -752,8 +752,28 @@ def main():
 
     setup_window(cfg["background_opacity"] < 0.999)
 
-    font = pygame.font.SysFont(cfg["font_name"], 16)
-    font_big = pygame.font.SysFont(cfg["font_name"], 22, bold=True)
+    def make_font(size, bold=False):
+        """SysFont 在部分電腦會因字型登錄檔異常而炸掉,逐層 fallback。"""
+        try:
+            return pygame.font.SysFont(cfg["font_name"], size, bold=bold)
+        except Exception as e:
+            print(f"[warn] SysFont 失敗,改用字型檔: {e}")
+        for p in (r"C:\Windows\Fonts\msjh.ttc", r"C:\Windows\Fonts\msjhbd.ttc",
+                  r"C:\Windows\Fonts\mingliu.ttc", r"C:\Windows\Fonts\simsun.ttc",
+                  r"C:\Windows\Fonts\arial.ttf"):
+            if os.path.exists(p):
+                try:
+                    f = pygame.font.Font(p, size)
+                    f.set_bold(bold)
+                    return f
+                except Exception:
+                    pass
+        f = pygame.font.Font(None, size)   # pygame 內建字型(無中文)
+        f.set_bold(bold)
+        return f
+
+    font = make_font(16)
+    font_big = make_font(22, bold=True)
 
     palette = [hex_to_rgb(c) for c in cfg["palette"]]
     key_colors = {k: hex_to_rgb(v) for k, v in cfg["key_colors"].items()}
@@ -1376,6 +1396,6 @@ if __name__ == "__main__":
         print("\n錯誤已寫入 error.log")
         try:
             input("按 Enter 離開...")
-        except EOFError:
-            pass
+        except Exception:
+            pass   # --noconsole 打包的 exe 沒有 stdin
         sys.exit(1)

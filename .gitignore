@@ -1,0 +1,29 @@
+# ── PyInstaller 打包產物 ──
+build/
+dist/
+*.spec
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── 程式執行產生的個人資料 ──
+config.json
+config.json.tmp
+error.log
+icons/
+presets/
+recordings/
+
+# ── 編輯器 / 系統 ──
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+Desktop.ini
+.DS_Store
