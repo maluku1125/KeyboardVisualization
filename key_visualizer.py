@@ -42,6 +42,8 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
 IS_WIN = sys.platform == "win32"
 
 DEFAULT_CONFIG = {
+    "language": "zh",                # "zh" 繁體中文 / "en" English
+    "active_preset": "",             # 目前套用的 preset 名稱(顯示用)
     "direction": "rtl",              # "rtl" 右到左 / "ltr" 左到右
     "window_width": 960,
     "window_height": 340,
@@ -61,6 +63,9 @@ DEFAULT_CONFIG = {
     "palette": ["#4FC3F7", "#FF6B9D", "#FFD54F", "#81C784", "#BA68C8", "#FF8A65", "#4DB6AC", "#F06292"],
     "default_color": None,
     "max_lanes": 8,
+    "track_mouse": True,             # 偵測滑鼠按鍵(左/右/中/側鍵)
+    "click_through": False,          # 點擊穿透(僅透明模式,全域 F8 切換)
+    "lock_keys": True,               # 鎖定:非設定頁面開啟時,不自動新增按鍵軌道
     "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
     "always_on_top": False,          # 視窗總是在最頂層(透明模式下強制開啟)
     "show_now_line": True,           # 畫面前緣的白色現在線
@@ -69,15 +74,62 @@ DEFAULT_CONFIG = {
     "min_note_px": 18
 }
 
-# 按鍵頁顯示的完整鍵盤清單(pynput 名稱)
+# 按鍵頁顯示的完整鍵盤清單(QWERTY 實體排列順序)
 ALL_KEYS = (
-    list("abcdefghijklmnopqrstuvwxyz") + list("0123456789")
-    + [f"f{i}" for i in range(1, 13)]
-    + ["space", "enter", "shift", "ctrl", "alt", "tab", "esc", "backspace",
-       "caps_lock", "delete", "insert", "home", "end", "page_up", "page_down",
-       "up", "down", "left", "right",
-       "-", "=", "[", "]", "\\", ";", "'", ",", ".", "/", "`"]
+    ["esc"] + [f"f{i}" for i in range(1, 13)]
+    + ["`"] + list("1234567890") + ["-", "=", "backspace"]
+    + ["tab"] + list("qwertyuiop") + ["[", "]", "\\"]
+    + ["caps_lock"] + list("asdfghjkl") + [";", "'", "enter"]
+    + ["shift"] + list("zxcvbnm") + [",", ".", "/"]
+    + ["ctrl", "alt", "space"]
+    + ["up", "down", "left", "right"]
+    + ["insert", "delete", "home", "end", "page_up", "page_down"]
+    + ["m_left", "m_right", "m_middle", "m_x1", "m_x2"]   # 滑鼠按鍵
 )
+
+# 內建顯示名稱(config 的 key_labels 可覆蓋)
+FALLBACK_LABELS = {
+    "m_left": "M左", "m_right": "M右", "m_middle": "M中", "m_x1": "M4", "m_x2": "M5",
+    "space": "SPACE", "up": "↑", "down": "↓", "left": "←", "right": "→",
+}
+
+# ── 介面文字(zh / en)──────────────────────────────────────
+STR = {
+    "caption": {"zh": "Key Visualizer  |  F1 方向  F2 重置  F3 設定  F4 錄製  ESC 離開",
+                "en": "Key Visualizer  |  F1 Direction  F2 Reset  F3 Settings  F4 Record  ESC Quit"},
+    "hint": {"zh": "F3 設定  F4 錄製  F8 穿透", "en": "F3 Settings  F4 Record  F8 Click-thru"},
+    "hint_ct": {"zh": "F3 設定  F4 錄製  F8 穿透中", "en": "F3 Settings  F4 Record  F8 Thru: ON"},
+    "settings": {"zh": "設定", "en": "Settings"},
+    "tab_general": {"zh": "一般", "en": "General"},
+    "tab_keys": {"zh": "按鍵", "en": "Keys"},
+    "tab_presets": {"zh": "Preset", "en": "Presets"},
+    "on": {"zh": "開", "en": "On"},
+    "off": {"zh": "關", "en": "Off"},
+    "icon_btn": {"zh": "圖片", "en": "Icon"},
+    "disable": {"zh": "停用", "en": "Disable"},
+    "disabled": {"zh": "已停用", "en": "Disabled"},
+    "auto": {"zh": "自動", "en": "Auto"},
+    "lane_n": {"zh": "軌道 {n}", "en": "Lane {n}"},
+    "scroll": {"zh": "(滾輪捲動)", "en": "(scroll)"},
+    "tip_general": {"zh": "點 − / + 或按鈕切換,改動立即儲存 (F3/ESC 關閉)",
+                    "en": "Click −/+ or buttons; saves instantly (F3/ESC closes)"},
+    "tip_keys": {"zh": "「圖片」選檔、✕ 清除、停用不顯示;右側 − / + 固定軌道",
+                 "en": "Icon = set image, ✕ = clear, Disable = hide; −/+ = fixed lane"},
+    "tip_presets": {"zh": "「套用」切換組合;「儲存」把目前按鍵設定覆寫進該 preset",
+                    "en": "Apply = switch; Save = overwrite preset with current key settings"},
+    "apply": {"zh": "套用", "en": "Apply"},
+    "save": {"zh": "儲存", "en": "Save"},
+    "delete": {"zh": "刪除", "en": "Del"},
+    "new_preset": {"zh": "+ 新增", "en": "+ New"},
+    "no_presets": {"zh": "還沒有 preset,按右上「+ 新增」把目前設定存成一組",
+                   "en": "No presets yet. Click \"+ New\" to save current settings."},
+    "active_mark": {"zh": "● 使用中", "en": "● active"},
+    "preset_name_title": {"zh": "新增 Preset", "en": "New Preset"},
+    "preset_name_prompt": {"zh": "輸入 preset 名稱:", "en": "Enter preset name:"},
+}
+
+# preset 儲存的欄位(其餘設定為全域共用)
+PRESET_FIELDS = ["key_icons", "fixed_lanes", "disabled_keys", "key_labels", "key_colors", "max_lanes"]
 
 
 def hex_to_rgb(s):
@@ -86,9 +138,14 @@ def hex_to_rgb(s):
 
 
 def save_config(cfg):
+    """原子寫入:先寫暫存檔再替換,避免程式被強制關閉時 config 變空檔。"""
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG_PATH)
     except Exception as e:
         print(f"[warn] config.json 儲存失敗: {e}")
 
@@ -107,6 +164,45 @@ def load_config():
         cfg["background_opacity"] = 0.0
     save_config(cfg)
     return cfg
+
+
+PRESETS_DIR = os.path.join(SCRIPT_DIR, "presets")
+
+
+def list_presets():
+    if not os.path.isdir(PRESETS_DIR):
+        return []
+    return sorted(os.path.splitext(f)[0] for f in os.listdir(PRESETS_DIR) if f.endswith(".json"))
+
+
+def save_preset_file(cfg, name):
+    os.makedirs(PRESETS_DIR, exist_ok=True)
+    data = {k: cfg[k] for k in PRESET_FIELDS}
+    tmp = os.path.join(PRESETS_DIR, name + ".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, os.path.join(PRESETS_DIR, name + ".json"))
+
+
+def load_preset_file(name):
+    with open(os.path.join(PRESETS_DIR, name + ".json"), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def ask_text(title, prompt):
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        s = simpledialog.askstring(title, prompt, parent=root)
+        root.destroy()
+        s = (s or "").strip()
+        return "".join(c for c in s if c not in '\\/:*?"<>|')[:40]
+    except Exception as e:
+        print(f"[warn] 無法開啟輸入對話框: {e}")
+        return ""
 
 
 def pick_image_file():
@@ -140,6 +236,7 @@ class KeyState:
         self.recording = False
         self.rec = []
         self.rec_start = None
+        self.req_clickthrough = False   # 全域 F8 請求切換點擊穿透
 
     def press(self, key, now):
         with self.lock:
@@ -212,12 +309,32 @@ def start_listener(state):
     from pynput import keyboard
 
     def on_press(key):
+        if key == keyboard.Key.f8:
+            state.req_clickthrough = True
         state.press(normalize_key(key), time.time())
 
     def on_release(key):
         state.release(normalize_key(key), time.time())
 
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.daemon = True
+    listener.start()
+    return listener
+
+
+def start_mouse_listener(state, cfg):
+    from pynput import mouse
+
+    def on_click(x, y, button, pressed):
+        if not cfg["track_mouse"]:
+            return
+        name = "m_" + button.name
+        if pressed:
+            state.press(name, time.time())
+        else:
+            state.release(name, time.time())
+
+    listener = mouse.Listener(on_click=on_click)
     listener.daemon = True
     listener.start()
     return listener
@@ -345,6 +462,13 @@ if IS_WIN:
         _user32.SetWindowPos(hwnd, HWND_TOPMOST if on else HWND_NOTOPMOST,
                              0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
+    WS_EX_TRANSPARENT = 0x20
+
+    def win_set_clickthrough(hwnd, on):
+        style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style = (style | WS_EX_TRANSPARENT) if on else (style & ~WS_EX_TRANSPARENT)
+        _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
     def win_cursor_pos():
         pt = wintypes.POINT()
         _user32.GetCursorPos(ctypes.byref(pt))
@@ -394,22 +518,38 @@ if IS_WIN:
         _user32.ReleaseDC(0, hdc_screen)
 
 
-# ── 一般設定項目 ──────────────────────────────────────────
+# ── 一般設定項目(label/names 皆為 zh/en 雙語)──────────────
 SETTING_ITEMS = [
-    {"id": "max_lanes", "label": "軌道數", "type": "int", "min": 1, "max": 16, "step": 1},
-    {"id": "background_opacity", "label": "背景透明度 (0%=穿透)", "type": "pct", "min": 0.0, "max": 1.0, "step": 0.05},
-    {"id": "show_hold", "label": "顯示按壓長度 (關=正方形)", "type": "bool"},
-    {"id": "direction", "label": "滑動方向", "type": "choice", "choices": ["rtl", "ltr"],
-     "names": {"rtl": "右 → 左", "ltr": "左 → 右"}},
-    {"id": "scroll_speed", "label": "滑動速度", "type": "int", "min": 60, "max": 600, "step": 20},
-    {"id": "auto_record", "label": "自動錄製 (啟動即錄, F4 可切換)", "type": "bool"},
-    {"id": "window_width", "label": "視窗寬度", "type": "int", "min": 320, "max": 3840, "step": 40},
-    {"id": "window_height", "label": "視窗高度", "type": "int", "min": 160, "max": 2160, "step": 20},
-    {"id": "always_on_top", "label": "總是在最頂層", "type": "bool"},
-    {"id": "show_now_line", "label": "顯示現在線 (前緣白線)", "type": "bool"},
-    {"id": "show_stats", "label": "顯示統計列", "type": "bool"},
-    {"id": "chroma_key", "label": "綠幕模式 (OBS 色度去背)", "type": "bool"},
+    {"id": "language", "label": {"zh": "語言 Language", "en": "Language 語言"}, "type": "choice",
+     "choices": ["zh", "en"], "names": {"zh": {"zh": "繁體中文", "en": "繁體中文"},
+                                        "en": {"zh": "English", "en": "English"}}},
+    {"id": "max_lanes", "label": {"zh": "軌道數", "en": "Lanes"}, "type": "int", "min": 1, "max": 16, "step": 1},
+    {"id": "background_opacity", "label": {"zh": "背景透明度 (0%=穿透)", "en": "BG opacity (0% = invisible)"},
+     "type": "pct", "min": 0.0, "max": 1.0, "step": 0.05},
+    {"id": "show_hold", "label": {"zh": "顯示按壓長度 (關=正方形)", "en": "Hold length (off = square)"}, "type": "bool"},
+    {"id": "track_mouse", "label": {"zh": "偵測滑鼠按鍵", "en": "Track mouse buttons"}, "type": "bool"},
+    {"id": "click_through", "label": {"zh": "點擊穿透 (透明模式, F8 切換)", "en": "Click-through (F8 toggles)"}, "type": "bool"},
+    {"id": "lock_keys", "label": {"zh": "鎖定按鍵 (只在設定開啟時新增)", "en": "Lock keys (add only in settings)"}, "type": "bool"},
+    {"id": "direction", "label": {"zh": "滑動方向", "en": "Scroll direction"}, "type": "choice",
+     "choices": ["rtl", "ltr"], "names": {"rtl": {"zh": "右 → 左", "en": "Right → Left"},
+                                          "ltr": {"zh": "左 → 右", "en": "Left → Right"}}},
+    {"id": "scroll_speed", "label": {"zh": "滑動速度", "en": "Scroll speed"}, "type": "int", "min": 60, "max": 600, "step": 20},
+    {"id": "auto_record", "label": {"zh": "自動錄製 (啟動即錄)", "en": "Auto record on launch"}, "type": "bool"},
+    {"id": "window_width", "label": {"zh": "視窗寬度", "en": "Window width"}, "type": "int", "min": 320, "max": 3840, "step": 40},
+    {"id": "window_height", "label": {"zh": "視窗高度", "en": "Window height"}, "type": "int", "min": 160, "max": 2160, "step": 20},
+    {"id": "always_on_top", "label": {"zh": "總是在最頂層", "en": "Always on top"}, "type": "bool"},
+    {"id": "show_now_line", "label": {"zh": "顯示現在線 (前緣白線)", "en": "Show now-line"}, "type": "bool"},
+    {"id": "show_stats", "label": {"zh": "顯示統計列", "en": "Show stats bar"}, "type": "bool"},
+    {"id": "chroma_key", "label": {"zh": "綠幕模式 (OBS 色度去背)", "en": "Chroma key mode (OBS)"}, "type": "bool"},
 ]
+
+
+def cur_lang(cfg):
+    return "en" if cfg.get("language") == "en" else "zh"
+
+
+def tr(cfg, key):
+    return STR[key][cur_lang(cfg)]
 
 
 def save_recording(cfg, notes, t0, t1):
@@ -481,11 +621,11 @@ def value_text(cfg, item):
     v = cfg[item["id"]]
     t = item["type"]
     if t == "bool":
-        return "開" if v else "關"
+        return tr(cfg, "on") if v else tr(cfg, "off")
     if t == "pct":
         return f"{int(round(v * 100))}%"
     if t == "choice":
-        return item["names"][v]
+        return item["names"][v][cur_lang(cfg)]
     return str(v)
 
 
@@ -520,6 +660,10 @@ def main():
             print(f"[error] 無法啟動全域鍵盤監聽: {e}")
             print("        可先用  python key_visualizer.py --demo  預覽效果")
             return
+        try:
+            start_mouse_listener(state, cfg)
+        except Exception as e:
+            print(f"[warn] 無法啟動滑鼠監聽: {e}")
 
     exit_after = None          # 測試用 --exit-after N
     if "--exit-after" in sys.argv:
@@ -533,15 +677,17 @@ def main():
 
     pygame.init()
     W, H = int(cfg["window_width"]), int(cfg["window_height"])
-    pygame.display.set_caption("Key Visualizer  |  F1 方向  F2 重置  F3 設定  F4 錄製  ESC 離開")
+    pygame.display.set_caption(tr(cfg, "caption"))
     clock = pygame.time.Clock()
 
     display = None
     hwnd = None
     layered = False
+    ct_active = False          # 點擊穿透目前是否生效
 
     def setup_window(want_layered):
-        nonlocal display, hwnd, layered
+        nonlocal display, hwnd, layered, ct_active
+        ct_active = False      # 視窗重建後樣式重置
         want_layered = want_layered and IS_WIN
         flags = pygame.NOFRAME if want_layered else pygame.RESIZABLE
         display = pygame.display.set_mode((W, H), flags)
@@ -629,6 +775,8 @@ def main():
                 setup_window(want)
         if item_id == "always_on_top" and IS_WIN:
             win_set_topmost(hwnd, layered or cfg["always_on_top"])
+        if item_id == "language":
+            pygame.display.set_caption(tr(cfg, "caption"))
         if item_id in ("window_width", "window_height"):
             nonlocal W, H
             W, H = int(cfg["window_width"]), int(cfg["window_height"])
@@ -643,7 +791,7 @@ def main():
         return palette[lane % len(palette)]
 
     def label_of(key):
-        return cfg["key_labels"].get(key, key.upper())
+        return cfg["key_labels"].get(key) or FALLBACK_LABELS.get(key) or key.upper()
 
     # ── 按鍵頁動作 ──
     def choose_icon(key):
@@ -659,7 +807,8 @@ def main():
             icons_dir = os.path.join(SCRIPT_DIR, "icons")
             os.makedirs(icons_dir, exist_ok=True)
             safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in key) or "key"
-            out_rel = os.path.join("icons", f"{safe}.png")
+            # 檔名帶時間戳:不同 preset 換圖時不會互相覆蓋
+            out_rel = os.path.join("icons", f"{safe}_{int(time.time())}.png")
             pygame.image.save(img, os.path.join(SCRIPT_DIR, out_rel))
             icons[key] = img
             cfg["key_icons"][key] = out_rel
@@ -699,6 +848,52 @@ def main():
         cfg["disabled_keys"] = sorted(dl)
         state.disabled = dl
         save_config(cfg)
+
+    # ── Preset 動作 ──
+    def apply_preset(name):
+        nonlocal lanes
+        try:
+            data = load_preset_file(name)
+        except Exception as e:
+            print(f"[warn] preset 載入失敗 {name}: {e}")
+            return
+        for k in PRESET_FIELDS:
+            if k in data:
+                cfg[k] = data[k]
+        cfg["active_preset"] = name
+        state.disabled = set(cfg["disabled_keys"])
+        lanes = LaneManager(cfg)
+        icons.clear()
+        icon_cache.clear()
+        thumb_cache.clear()
+        label_cache.clear()
+        key_colors.clear()
+        key_colors.update({k: hex_to_rgb(v) for k, v in cfg["key_colors"].items()})
+        for k, p in cfg["key_icons"].items():
+            load_icon(k, p)
+        save_config(cfg)
+
+    def save_preset(name):
+        try:
+            save_preset_file(cfg, name)
+            cfg["active_preset"] = name
+            save_config(cfg)
+        except Exception as e:
+            print(f"[warn] preset 儲存失敗 {name}: {e}")
+
+    def new_preset():
+        name = ask_text(tr(cfg, "preset_name_title"), tr(cfg, "preset_name_prompt"))
+        if name:
+            save_preset(name)
+
+    def delete_preset(name):
+        try:
+            os.remove(os.path.join(PRESETS_DIR, name + ".json"))
+            if cfg["active_preset"] == name:
+                cfg["active_preset"] = ""
+                save_config(cfg)
+        except Exception as e:
+            print(f"[warn] preset 刪除失敗 {name}: {e}")
 
     settings_open = False
     settings_page = "general"
@@ -762,6 +957,19 @@ def main():
             else:
                 drag = None
 
+        # 全域 F8:切換點擊穿透
+        if state.req_clickthrough:
+            state.req_clickthrough = False
+            if layered:
+                cfg["click_through"] = not cfg["click_through"]
+                save_config(cfg)
+        # 套用點擊穿透(設定頁開啟時暫時關閉,才能操作介面)
+        if IS_WIN:
+            want_ct = layered and cfg["click_through"] and not settings_open
+            if want_ct != ct_active:
+                win_set_clickthrough(hwnd, want_ct)
+                ct_active = want_ct
+
         now = time.time()
         top = 46 if cfg["show_stats"] else 8
         lane_area = H - top - 8
@@ -792,7 +1000,8 @@ def main():
             stats_surf = font_big.render(stats, True, (240, 240, 245))
             screen.blit(stats_surf, (12, 10))
             stats_w = 12 + stats_surf.get_width()
-            hint = font.render("F3 設定  F4 錄製", True, (150, 150, 170))
+            hint_key = "hint_ct" if (ct_active or (layered and cfg["click_through"])) else "hint"
+            hint = font.render(tr(cfg, hint_key), True, (150, 150, 170))
             screen.blit(hint, (W - hint.get_width() - 12, 4))
         if state.recording:
             rec_y = 20 if cfg["show_stats"] else 14
@@ -826,6 +1035,11 @@ def main():
         for note in all_notes:
             key = note["key"]
             if key in state.disabled or not lanes.allowed(key):
+                continue
+            # 鎖定模式:設定頁沒開時,不為陌生按鍵新增軌道
+            if (cfg["lock_keys"] and not settings_open
+                    and key not in lanes.fixed and key not in lanes.lanes
+                    and note.get("lane") is None):
                 continue
             if key in lanes.fixed:
                 lane = lanes.fixed[key]
@@ -890,14 +1104,21 @@ def main():
         # ── 設定頁面 ──
         hit_rects = []
         if settings_open:
+            lang = cur_lang(cfg)
             pw = 560
             row_h = 38
             visible_rows = max(3, (H - 120) // row_h)
             known_keys = all_keys_order + sorted(
                 (set(cfg["key_icons"]) | set(cfg["fixed_lanes"]) | set(cfg["disabled_keys"])
                  | set(lanes.last_used)) - set(all_keys_order))
-            page_items = SETTING_ITEMS if settings_page == "general" else known_keys
-            n_rows = min(visible_rows, len(page_items))
+            presets = list_presets()
+            if settings_page == "general":
+                page_items = SETTING_ITEMS
+            elif settings_page == "keys":
+                page_items = known_keys
+            else:
+                page_items = presets
+            n_rows = min(visible_rows, max(1, len(page_items)))
             ph = row_h * n_rows + 96
             px, py = (W - pw) // 2, max(8, (H - ph) // 2)
             panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
@@ -910,7 +1131,8 @@ def main():
                 settings_page = t
                 key_scroll = 0
 
-            tabs = [("general", "一般"), ("keys", "按鍵")]
+            tabs = [("general", tr(cfg, "tab_general")), ("keys", tr(cfg, "tab_keys")),
+                    ("presets", tr(cfg, "tab_presets"))]
             tx = px + 16
             for tid, tname in tabs:
                 sel = settings_page == tid
@@ -929,12 +1151,12 @@ def main():
                 key_scroll = min(key_scroll, max_scroll_g)
                 shown_items = SETTING_ITEMS[key_scroll:key_scroll + visible_rows]
                 if max_scroll_g > 0:
-                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_items)} / {len(SETTING_ITEMS)}  (滾輪捲動)",
+                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_items)} / {len(SETTING_ITEMS)}  {tr(cfg, 'scroll')}",
                                          True, (140, 140, 160))
                     screen.blit(sc_txt, (px + pw - sc_txt.get_width() - 16, py + 16))
                 for idx, item in enumerate(shown_items):
                     ry = body_y + idx * row_h
-                    screen.blit(font.render(item["label"], True, (210, 210, 220)), (px + 16, ry + 8))
+                    screen.blit(font.render(item["label"][lang], True, (210, 210, 220)), (px + 16, ry + 8))
                     val = font.render(value_text(cfg, item), True, (150, 220, 255))
                     if item["type"] in ("int", "pct"):
                         plus = pygame.Rect(px + pw - 44, ry + 4, 28, 26)
@@ -955,8 +1177,8 @@ def main():
                         screen.blit(val, (btn.centerx - val.get_width() // 2, ry + 8))
                         hit_rects.append((btn, (lambda it=item: (change_value(cfg, it, +1)
                                                                  and on_setting_changed(it["id"])))))
-                tip = font.render("點 − / + 或按鈕切換,改動立即儲存 (F3/ESC 關閉)", True, (140, 140, 160))
-            else:
+                tip = font.render(tr(cfg, "tip_general"), True, (140, 140, 160))
+            elif settings_page == "keys":
                 max_scroll = max(0, len(known_keys) - visible_rows)
                 key_scroll = min(key_scroll, max_scroll)
                 shown = known_keys[key_scroll:key_scroll + visible_rows]
@@ -973,7 +1195,7 @@ def main():
                     # 圖片
                     pic_btn = pygame.Rect(px + 160, ry + 4, 52, 26)
                     pygame.draw.rect(screen, (55, 55, 75), pic_btn, border_radius=6)
-                    s = font.render("圖片", True, (230, 230, 240))
+                    s = font.render(tr(cfg, "icon_btn"), True, (230, 230, 240))
                     screen.blit(s, (pic_btn.centerx - s.get_width() // 2, ry + 8))
                     hit_rects.append((pic_btn, (lambda k=key: choose_icon(k))))
                     # 清除圖片
@@ -984,10 +1206,10 @@ def main():
                         screen.blit(s, (clr_btn.centerx - s.get_width() // 2, ry + 8))
                         hit_rects.append((clr_btn, (lambda k=key: clear_icon(k))))
                     # 停用 / 啟用
-                    dis_btn = pygame.Rect(px + 268, ry + 4, 56, 26)
+                    dis_btn = pygame.Rect(px + 268, ry + 4, 64, 26)
                     pygame.draw.rect(screen, (90, 50, 55) if disabled else (55, 55, 75),
                                      dis_btn, border_radius=6)
-                    s = font.render("已停用" if disabled else "停用", True,
+                    s = font.render(tr(cfg, "disabled") if disabled else tr(cfg, "disable"), True,
                                     (255, 170, 170) if disabled else (230, 230, 240))
                     screen.blit(s, (dis_btn.centerx - s.get_width() // 2, ry + 8))
                     hit_rects.append((dis_btn, (lambda k=key: toggle_disable(k))))
@@ -1000,15 +1222,54 @@ def main():
                         screen.blit(s2, (rect.centerx - s2.get_width() // 2,
                                          rect.centery - s2.get_height() // 2))
                     fl = cfg["fixed_lanes"].get(key)
-                    vtxt = "自動" if fl is None else f"軌道 {fl + 1}"
+                    vtxt = tr(cfg, "auto") if fl is None else tr(cfg, "lane_n").format(n=fl + 1)
                     vs = font.render(vtxt, True, (150, 220, 255) if fl is None else (255, 214, 120))
                     screen.blit(vs, ((minus.right + plus.left - vs.get_width()) // 2, ry + 8))
                     hit_rects.append((minus, (lambda k=key: shift_fixed_lane(k, -1))))
                     hit_rects.append((plus, (lambda k=key: shift_fixed_lane(k, +1))))
-                sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown)} / {len(known_keys)}  (滾輪捲動)",
+                sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown)} / {len(known_keys)}  {tr(cfg, 'scroll')}",
                                      True, (140, 140, 160))
                 screen.blit(sc_txt, (px + pw - sc_txt.get_width() - 16, py + 16))
-                tip = font.render("「圖片」選檔、✕ 清除、停用不顯示;右側 − / + 固定軌道", True, (140, 140, 160))
+                tip = font.render(tr(cfg, "tip_keys"), True, (140, 140, 160))
+            else:
+                # ── Preset 分頁 ──
+                new_btn = pygame.Rect(px + pw - 96, py + 12, 80, 28)
+                pygame.draw.rect(screen, (30, 80, 55), new_btn, border_radius=6)
+                s = font.render(tr(cfg, "new_preset"), True, (190, 255, 210))
+                screen.blit(s, (new_btn.centerx - s.get_width() // 2, new_btn.centery - s.get_height() // 2))
+                hit_rects.append((new_btn, new_preset))
+
+                if not presets:
+                    screen.blit(font.render(tr(cfg, "no_presets"), True, (170, 170, 190)),
+                                (px + 16, body_y + 8))
+                max_scroll_p = max(0, len(presets) - visible_rows)
+                key_scroll = min(key_scroll, max_scroll_p)
+                shown_p = presets[key_scroll:key_scroll + visible_rows]
+                for idx, name in enumerate(shown_p):
+                    ry = body_y + idx * row_h
+                    is_active = name == cfg["active_preset"]
+                    nm = font.render(name, True, (150, 220, 255) if is_active else (210, 210, 220))
+                    screen.blit(nm, (px + 16, ry + 8))
+                    if is_active:
+                        am = font.render(tr(cfg, "active_mark"), True, (120, 220, 160))
+                        screen.blit(am, (px + 26 + nm.get_width(), ry + 8))
+                    ap_btn = pygame.Rect(px + pw - 236, ry + 4, 66, 26)
+                    sv_btn = pygame.Rect(px + pw - 162, ry + 4, 66, 26)
+                    dl_btn = pygame.Rect(px + pw - 88, ry + 4, 66, 26)
+                    for rect, txt, col, tcol in ((ap_btn, tr(cfg, "apply"), (28, 74, 99), (170, 220, 255)),
+                                                 (sv_btn, tr(cfg, "save"), (55, 55, 75), (230, 230, 240)),
+                                                 (dl_btn, tr(cfg, "delete"), (80, 45, 50), (240, 190, 190))):
+                        pygame.draw.rect(screen, col, rect, border_radius=6)
+                        s2 = font.render(txt, True, tcol)
+                        screen.blit(s2, (rect.centerx - s2.get_width() // 2, rect.centery - s2.get_height() // 2))
+                    hit_rects.append((ap_btn, (lambda n=name: apply_preset(n))))
+                    hit_rects.append((sv_btn, (lambda n=name: save_preset(n))))
+                    hit_rects.append((dl_btn, (lambda n=name: delete_preset(n))))
+                if max_scroll_p > 0:
+                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_p)} / {len(presets)}  {tr(cfg, 'scroll')}",
+                                         True, (140, 140, 160))
+                    screen.blit(sc_txt, (px + 16 + 200, py + 16))
+                tip = font.render(tr(cfg, "tip_presets"), True, (140, 140, 160))
 
             screen.blit(tip, (px + 16, py + ph - 26))
 
