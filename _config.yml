@@ -1,0 +1,12 @@
+exclude:
+  - .gitattributes
+  - AllJobSkill.zip
+  - KeyVisualizer.spec
+  - README.md
+  - __pycache__/
+  - build/
+  - build_exe.bat
+  - config.json
+  - dist/
+  - key_visualizer.py
+  - run.bat
