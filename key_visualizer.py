@@ -123,6 +123,17 @@ STR = {
     "save": {"zh": "儲存", "en": "Save"},
     "delete": {"zh": "刪除", "en": "Del"},
     "new_preset": {"zh": "+ 新增", "en": "+ New"},
+    "confirm": {"zh": "確認", "en": "Confirm"},
+    "cancel": {"zh": "取消", "en": "Cancel"},
+    "ask_save": {"zh": "確定要用目前的按鍵設定覆寫\npreset「{n}」嗎?", "en": "Overwrite preset \"{n}\"\nwith current key settings?"},
+    "ask_delete": {"zh": "確定要刪除 preset「{n}」嗎?\n此操作無法復原。", "en": "Delete preset \"{n}\"?\nThis cannot be undone."},
+    "ask_clear": {"zh": "確定要清空所有按鍵設定嗎?\n(圖片、固定軌道、停用清單)", "en": "Clear all key settings?\n(icons, fixed lanes, disabled keys)"},
+    "clear_keys": {"zh": "清空所有按鍵設定", "en": "Clear all key settings"},
+    "clear_btn": {"zh": "清空", "en": "Clear"},
+    "saved_msg": {"zh": "已儲存:{n}", "en": "Saved: {n}"},
+    "applied_msg": {"zh": "已套用:{n}", "en": "Applied: {n}"},
+    "deleted_msg": {"zh": "已刪除:{n}", "en": "Deleted: {n}"},
+    "cleared_msg": {"zh": "已清空按鍵設定", "en": "Key settings cleared"},
     "no_presets": {"zh": "還沒有 preset,按右上「+ 新增」把目前設定存成一組",
                    "en": "No presets yet. Click \"+ New\" to save current settings."},
     "active_mark": {"zh": "● 使用中", "en": "● active"},
@@ -197,8 +208,20 @@ def ask_text(title, prompt):
         from tkinter import simpledialog
         root = tk.Tk()
         root.withdraw()
+        # 讓對話框本身置頂,否則會被「總是在最頂層」的主視窗蓋住
         root.attributes("-topmost", True)
-        s = simpledialog.askstring(title, prompt, parent=root)
+        root.update()
+
+        class _D(simpledialog._QueryString):
+            def body(self, master):
+                w = super().body(master)
+                self.attributes("-topmost", True)
+                self.lift()
+                self.focus_force()
+                return w
+
+        d = _D(title, prompt, parent=root)
+        s = d.result
         root.destroy()
         s = (s or "").strip()
         return "".join(c for c in s if c not in '\\/:*?"<>|')[:40]
@@ -941,12 +964,14 @@ def main():
         for k, p in cfg["key_icons"].items():
             load_icon(k, p)
         save_config(cfg)
+        show_toast(tr(cfg, "applied_msg").format(n=name))
 
     def save_preset(name):
         try:
             save_preset_file(cfg, name)
             cfg["active_preset"] = name
             save_config(cfg)
+            show_toast(tr(cfg, "saved_msg").format(n=name))
         except Exception as e:
             print(f"[warn] preset 儲存失敗 {name}: {e}")
 
@@ -960,7 +985,8 @@ def main():
             os.remove(os.path.join(PRESETS_DIR, name + ".json"))
             if cfg["active_preset"] == name:
                 cfg["active_preset"] = ""
-                save_config(cfg)
+            save_config(cfg)
+            show_toast(tr(cfg, "deleted_msg").format(n=name))
         except Exception as e:
             print(f"[warn] preset 刪除失敗 {name}: {e}")
 
@@ -969,6 +995,30 @@ def main():
     key_scroll = 0
     hit_rects = []
     drag = None            # (cursor_x0, cursor_y0, win_x0, win_y0)
+    confirm = None         # {"msg": 文字, "cb": 確認後執行}
+    toast = None           # (文字, 到期時間)
+
+    def show_toast(text):
+        nonlocal toast
+        toast = (text, time.time() + 2.0)
+
+    def ask_confirm(msg, cb):
+        nonlocal confirm
+        confirm = {"msg": msg, "cb": cb}
+
+    def clear_all_keys():
+        nonlocal lanes
+        cfg["key_icons"] = {}
+        cfg["fixed_lanes"] = {}
+        cfg["disabled_keys"] = []
+        state.disabled = set()
+        icons.clear()
+        icon_cache.clear()
+        thumb_cache.clear()
+        label_cache.clear()
+        lanes = LaneManager(cfg)
+        save_config(cfg)
+        show_toast(tr(cfg, "cleared_msg"))
 
     all_keys_order = list(ALL_KEYS)
     frame_count = 0
@@ -985,7 +1035,9 @@ def main():
                 save_config(cfg)
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
-                    if settings_open:
+                    if confirm:
+                        confirm = None
+                    elif settings_open:
                         settings_open = False
                     else:
                         running = False
@@ -1005,7 +1057,7 @@ def main():
                         state.start_record(time.time())
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 clicked = False
-                if settings_open:
+                if settings_open or confirm:
                     for rect, cb in hit_rects:
                         if rect.collidepoint(ev.pos):
                             cb()
@@ -1033,9 +1085,9 @@ def main():
             if layered:
                 cfg["click_through"] = not cfg["click_through"]
                 save_config(cfg)
-        # 套用點擊穿透(設定頁開啟時暫時關閉,才能操作介面)
+        # 套用點擊穿透(設定頁/對話框開啟時暫時關閉,才能操作介面)
         if IS_WIN:
-            want_ct = layered and cfg["click_through"] and not settings_open
+            want_ct = layered and cfg["click_through"] and not settings_open and not confirm
             if want_ct != ct_active:
                 win_set_clickthrough(hwnd, want_ct)
                 ct_active = want_ct
@@ -1322,6 +1374,13 @@ def main():
                 sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown)} / {len(known_keys)}  {tr(cfg, 'scroll')}",
                                      True, (140, 140, 160))
                 screen.blit(sc_txt, (px + pw - sc_txt.get_width() - 16, py + 16))
+                # 清空所有按鍵設定
+                clr_all = pygame.Rect(px + pw - 96, py + ph - 32, 80, 24)
+                pygame.draw.rect(screen, (90, 50, 55), clr_all, border_radius=6)
+                s = font.render(tr(cfg, "clear_btn"), True, (255, 180, 180))
+                screen.blit(s, (clr_all.centerx - s.get_width() // 2,
+                                clr_all.centery - s.get_height() // 2))
+                hit_rects.append((clr_all, (lambda: ask_confirm(tr(cfg, "ask_clear"), clear_all_keys))))
                 tip = font.render(tr(cfg, "tip_keys"), True, (140, 140, 160))
             else:
                 # ── Preset 分頁 ──
@@ -1355,8 +1414,10 @@ def main():
                         s2 = font.render(txt, True, tcol)
                         screen.blit(s2, (rect.centerx - s2.get_width() // 2, rect.centery - s2.get_height() // 2))
                     hit_rects.append((ap_btn, (lambda n=name: apply_preset(n))))
-                    hit_rects.append((sv_btn, (lambda n=name: save_preset(n))))
-                    hit_rects.append((dl_btn, (lambda n=name: delete_preset(n))))
+                    hit_rects.append((sv_btn, (lambda n=name: ask_confirm(
+                        tr(cfg, "ask_save").format(n=n), lambda n=n: save_preset(n)))))
+                    hit_rects.append((dl_btn, (lambda n=name: ask_confirm(
+                        tr(cfg, "ask_delete").format(n=n), lambda n=n: delete_preset(n)))))
                 if max_scroll_p > 0:
                     sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_p)} / {len(presets)}  {tr(cfg, 'scroll')}",
                                          True, (140, 140, 160))
@@ -1364,6 +1425,56 @@ def main():
                 tip = font.render(tr(cfg, "tip_presets"), True, (140, 140, 160))
 
             screen.blit(tip, (px + 16, py + ph - 26))
+
+        # ── 確認對話框 ──
+        if confirm:
+            lines = confirm["msg"].split("\n")
+            dw = max(300, max(font.size(l)[0] for l in lines) + 48)
+            dh = 60 + 22 * len(lines) + 44
+            dx, dy = (W - dw) // 2, (H - dh) // 2
+            ov = pygame.Surface((W, H), pygame.SRCALPHA)
+            ov.fill((0, 0, 0, 120))
+            screen.blit(ov, (0, 0))
+            panel = pygame.Surface((dw, dh), pygame.SRCALPHA)
+            panel.fill((24, 24, 36, 252))
+            screen.blit(panel, (dx, dy))
+            pygame.draw.rect(screen, (120, 120, 155), (dx, dy, dw, dh), 1, border_radius=8)
+            for i, l in enumerate(lines):
+                ls = font.render(l, True, (235, 235, 245))
+                screen.blit(ls, (dx + (dw - ls.get_width()) // 2, dy + 24 + i * 22))
+            ok_btn = pygame.Rect(dx + dw // 2 - 116, dy + dh - 44, 108, 30)
+            no_btn = pygame.Rect(dx + dw // 2 + 8, dy + dh - 44, 108, 30)
+            for rect, txt, col, tcol in ((ok_btn, tr(cfg, "confirm"), (120, 55, 60), (255, 200, 200)),
+                                         (no_btn, tr(cfg, "cancel"), (55, 55, 75), (225, 225, 235))):
+                pygame.draw.rect(screen, col, rect, border_radius=6)
+                s = font.render(txt, True, tcol)
+                screen.blit(s, (rect.centerx - s.get_width() // 2, rect.centery - s.get_height() // 2))
+
+            def _do():
+                nonlocal confirm
+                cb = confirm["cb"]
+                confirm = None
+                cb()
+
+            def _cancel():
+                nonlocal confirm
+                confirm = None
+
+            hit_rects = [(ok_btn, _do), (no_btn, _cancel)]   # 對話框開啟時只接受這兩個
+
+        # ── 提示訊息 (toast) ──
+        if toast:
+            if time.time() > toast[1]:
+                toast = None
+            else:
+                ts = font.render(toast[0], True, (190, 255, 210))
+                bw, bh = ts.get_width() + 24, ts.get_height() + 14
+                bx, by = (W - bw) // 2, H - bh - 14
+                tp = pygame.Surface((bw, bh), pygame.SRCALPHA)
+                tp.fill((26, 60, 42, 240))
+                screen.blit(tp, (bx, by))
+                pygame.draw.rect(screen, (70, 160, 110), (bx, by, bw, bh), 1, border_radius=6)
+                screen.blit(ts, (bx + 12, by + 7))
 
         if layered:
             win_layered_update(hwnd, screen)
