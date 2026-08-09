@@ -17,8 +17,16 @@
   .btn:hover { background: #34344c; }
   .btn.primary { background: #1c4a63; border-color: #2d6a8a; }
   select { background: #2a2a3d; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font-size: 13px; }
-  #stats { display: flex; gap: 14px; font-size: 13px; color: var(--dim); margin-left: auto; white-space: nowrap; }
+  #stats { display: flex; gap: 14px; font-size: 13px; color: var(--dim); margin-left: auto; white-space: nowrap; align-items: center; }
   #stats b { color: var(--text); }
+  .badge { border-radius: 999px; padding: 2px 9px; font-size: 12px; border: 1px solid; }
+  .badge.ok { color: #7fe0a8; border-color: #2e6b4b; background: #17301f; }
+  .badge.warn { color: #ffc978; border-color: #6b512e; background: #302617; }
+  #meta { display: flex; gap: 10px; font-size: 12px; color: var(--dim); padding: 5px 14px;
+          background: #12121b; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #meta:empty { display: none; }
+  #meta span { background: #1d1d2a; border-radius: 4px; padding: 2px 8px; }
+  #meta i { color: #6c6c85; font-style: normal; }
   #wrap { flex: 1; position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   canvas.dragging { cursor: grabbing; }
@@ -47,6 +55,7 @@
   <span class="hint">滾輪縮放.拖曳平移.點擊定位</span>
   <div id="stats"></div>
 </header>
+<div id="meta"></div>
 <div id="wrap">
   <canvas id="cv"></canvas>
   <div id="drop">
@@ -108,15 +117,45 @@ function labelOf(key) {
   return (data.key_labels && data.key_labels[key]) || (key.length === 1 ? key.toUpperCase() : key.toUpperCase());
 }
 
+// 簽章驗證(與程式端 sign_recording 相同規則)
+const SIGN_KEY = "KeyVisualizer/rec-v2/2026";
+async function verifySignature(json) {
+  if (json.version < 2 || !json.signature) return null;   // v1 無簽章
+  try {
+    const head = ["version", "created", "duration_ms", "total", "max_kps"]
+      .map(k => String(json[k])).join("|");
+    const body = json.events.map(e => `${e.k},${e.s},${e.e},${e.l}`).join(";");
+    const payload = head + "\n" + body;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(SIGN_KEY),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+    const hex = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+    return hex === json.signature;
+  } catch (e) { return null; }
+}
+
 function load(json) {
   if (!json || !Array.isArray(json.events)) throw new Error("不是有效的 Key Visualizer 紀錄檔");
   data = json;
   images = {};
-  for (const [k, url] of Object.entries(json.icons || {})) {
-    const img = new Image();
-    img.onload = () => draw();
-    img.src = url;
-    images[k] = img;
+  // v1: icons = { key: dataURL }   v2: icons = { hash: dataURL } + key_icons = { key: hash }
+  const blobs = json.icons || {};
+  const keyMap = json.key_icons || null;
+  const cache = {};
+  const mk = url => {
+    if (!cache[url]) {
+      const img = new Image();
+      img.onload = () => draw();
+      img.src = url;
+      cache[url] = img;
+    }
+    return cache[url];
+  };
+  if (keyMap) {
+    for (const [k, h] of Object.entries(keyMap)) if (blobs[h]) images[k] = mk(blobs[h]);
+  } else {
+    for (const [k, url] of Object.entries(blobs)) images[k] = mk(url);
   }
   nLanes = Math.max(json.max_lanes || 1, ...json.events.map(e => (e.l || 0) + 1), 1);
   // KPS 序列(每 250ms 取樣,1 秒滑動窗)
@@ -138,7 +177,30 @@ function load(json) {
     `<span>時長 <b>${fmtTime(dur)}</b></span>` +
     `<span>總按鍵 <b>${json.total}</b></span>` +
     `<span>最大 KPS <b>${json.max_kps}</b></span>` +
-    `<span>平均 KPS <b>${(json.total / (dur / 1000)).toFixed(1)}</b></span>`;
+    `<span>平均 KPS <b>${(json.total / (dur / 1000)).toFixed(1)}</b></span>` +
+    `<span id="verifyBadge"></span>`;
+
+  // metadata 列(v2)
+  const m = json.meta || {};
+  const esc = s => String(s).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  const bits = [];
+  const add = (label, v) => { if (v) bits.push(`<span><i>${label}</i> ${esc(v)}</span>`); };
+  add("遊戲", m.game); add("職業", m.job); add("伺服器", m.server);
+  add("角色", m.character); add("Preset", m.preset);
+  add("錄製時間", json.created);
+  if (json.app_version) add("程式版本", "v" + json.app_version);
+  if (json.input_mode) add("輸入模式", json.input_mode === "poll" ? "低延遲輪詢" : "hook");
+  if (m.note) bits.push(`<span><i>備註</i> ${esc(m.note)}</span>`);
+  document.getElementById("meta").innerHTML = bits.join("");
+
+  verifySignature(json).then(ok => {
+    const el = document.getElementById("verifyBadge");
+    if (!el) return;
+    if (ok === true) el.innerHTML = `<span class="badge ok" title="簽章相符,由程式直接產生">✓ 已驗證</span>`;
+    else if (ok === false) el.innerHTML = `<span class="badge warn" title="內容與簽章不符,可能被編輯過">⚠ 內容已變更</span>`;
+    else el.innerHTML = `<span class="badge warn" title="舊版格式無簽章">未驗證 (v${json.version || 1})</span>`;
+  });
+
   drop.classList.add("hidden");
   fit();
 }

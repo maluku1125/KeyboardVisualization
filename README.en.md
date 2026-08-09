@@ -40,6 +40,12 @@ In transparent mode, press F8 and mouse clicks pass straight through the overlay
 
 Plain window capture works. For a clean cutout, enable chroma-key mode and add a Color Key filter, or simply use the transparent overlay mode on top of your scene.
 
+The chroma color is selectable (Green / Blue / Magenta / Cyan / Custom). **If your key icons contain green they'd be keyed out too — switch to magenta or blue.** "Custom…" opens the system color picker.
+
+## Recording format v2
+
+Recordings embed icons deduplicated by content hash (a skill image reused by several keys is stored once), carry metadata (game / job / server / character / note / preset / input mode) and a **signature**. The viewer shows "✓ Verified" for files produced directly by the app, or "⚠ Modified" when the JSON has been hand-edited. Older v1 recordings still open fine and are shown as unverified.
+
 ## Performance & Input Latency
 
 "**Low-latency mode**" is on by default: key states are read by polling, with no system hooks installed — the program is completely outside the game's input path and **adds zero key latency**. The trade-off: taps shorter than one frame (~16 ms at 60 fps) may be missed. Turning it off switches to global hooks, which give the most precise timing (best for chart recording) but route every key event through this program before it reaches the game, potentially adding a few milliseconds under load. "FPS limit" (30–240) lowers CPU usage when reduced.

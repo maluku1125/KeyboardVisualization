@@ -40,6 +40,10 @@ except ImportError:
 
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
 IS_WIN = sys.platform == "win32"
+APP_VERSION = "1.2.0"
+# 紀錄檔簽章金鑰。隨程式散布,只用來區分「程式產生」與「手動編輯」,
+# 不是安全機制;網站端仍應搭配異常偵測與影片佐證。
+SIGN_KEY = b"KeyVisualizer/rec-v2/2026"
 
 DEFAULT_CONFIG = {
     "language": "zh",                # "zh" 繁體中文 / "en" English
@@ -69,6 +73,12 @@ DEFAULT_CONFIG = {
     "click_through": False,          # 點擊穿透(僅透明模式,全域 F8 切換)
     "lock_keys": True,               # 鎖定:非設定頁面開啟時,不自動新增按鍵軌道
     "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
+    # 錄製 metadata(寫進紀錄檔,供社群網站顯示;可留空)
+    "meta_game": "MapleStory",
+    "meta_job": "",
+    "meta_server": "",
+    "meta_character": "",
+    "meta_note": "",
     "always_on_top": False,          # 視窗總是在最頂層(透明模式下強制開啟)
     "show_now_line": True,           # 畫面前緣的白色現在線
     "show_stats": True,
@@ -88,6 +98,8 @@ ALL_KEYS = (
     + ["insert", "delete", "home", "end", "page_up", "page_down"]
     + ["m_left", "m_right", "m_middle", "m_x1", "m_x2"]   # 滑鼠按鍵
 )
+
+STD_KEYS = set(ALL_KEYS)   # 標準按鍵集合;不在此集合的視為特殊鍵
 
 # 內建顯示名稱(config 的 key_labels 可覆蓋)
 FALLBACK_LABELS = {
@@ -228,6 +240,23 @@ def ask_text(title, prompt):
     except Exception as e:
         print(f"[warn] 無法開啟輸入對話框: {e}")
         return ""
+
+
+def pick_color(initial="#00FF00"):
+    """開系統選色器,回傳 #RRGGBB;取消回傳 None。"""
+    try:
+        import tkinter as tk
+        from tkinter import colorchooser
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        res = colorchooser.askcolor(color=initial, title="Chroma color", parent=root)
+        root.destroy()
+        return res[1].upper() if res and res[1] else None
+    except Exception as e:
+        print(f"[warn] 無法開啟選色器: {e}")
+        return None
 
 
 def pick_image_file():
@@ -577,7 +606,7 @@ SETTING_ITEMS = [
     {"id": "low_latency", "label": {"zh": "低延遲模式 (輪詢, 不影響遊戲輸入)", "en": "Low-latency mode (polling)"}, "type": "bool"},
     {"id": "fps_limit", "label": {"zh": "畫面更新率上限 (FPS)", "en": "FPS limit"}, "type": "int", "min": 30, "max": 240, "step": 30},
     {"id": "click_through", "label": {"zh": "點擊穿透 (透明模式, F8 切換)", "en": "Click-through (F8 toggles)"}, "type": "bool"},
-    {"id": "lock_keys", "label": {"zh": "鎖定按鍵 (只在設定開啟時新增)", "en": "Lock keys (add only in settings)"}, "type": "bool"},
+    {"id": "lock_keys", "label": {"zh": "隱藏非標準按鍵 (媒體鍵/Fn 等)", "en": "Hide non-standard keys (media/Fn)"}, "type": "bool"},
     {"id": "direction", "label": {"zh": "滑動方向", "en": "Scroll direction"}, "type": "choice",
      "choices": ["rtl", "ltr"], "names": {"rtl": {"zh": "右 → 左", "en": "Right → Left"},
                                           "ltr": {"zh": "左 → 右", "en": "Left → Right"}}},
@@ -589,6 +618,11 @@ SETTING_ITEMS = [
     {"id": "show_now_line", "label": {"zh": "顯示現在線 (前緣白線)", "en": "Show now-line"}, "type": "bool"},
     {"id": "show_stats", "label": {"zh": "顯示統計列", "en": "Show stats bar"}, "type": "bool"},
     {"id": "chroma_key", "label": {"zh": "綠幕模式 (OBS 色度去背)", "en": "Chroma key mode (OBS)"}, "type": "bool"},
+    {"id": "chroma_color", "label": {"zh": "綠幕顏色", "en": "Chroma color"}, "type": "choice",
+     "choices": ["#00FF00", "#0000FF", "#FF00FF", "#00FFFF", "custom"],
+     "names": {"#00FF00": {"zh": "綠", "en": "Green"}, "#0000FF": {"zh": "藍", "en": "Blue"},
+               "#FF00FF": {"zh": "洋紅", "en": "Magenta"}, "#00FFFF": {"zh": "青", "en": "Cyan"},
+               "custom": {"zh": "自訂…", "en": "Custom…"}}},
 ]
 
 
@@ -600,9 +634,22 @@ def tr(cfg, key):
     return STR[key][cur_lang(cfg)]
 
 
+def sign_recording(rec):
+    """對紀錄內容產生簽章。用途是區分「程式產生」與「手動編輯」,
+    並非防偽安全機制(金鑰隨程式散布),但可攔掉隨手改 JSON 的情況。"""
+    import hashlib
+    import hmac
+    # 用固定順序的純文字組成 payload,避免 JSON 序列化差異導致跨語言驗證失敗
+    head = "|".join(str(rec[k]) for k in ("version", "created", "duration_ms", "total", "max_kps"))
+    body = ";".join(f"{e['k']},{e['s']},{e['e']},{e['l']}" for e in rec["events"])
+    payload = head + "\n" + body
+    return hmac.new(SIGN_KEY, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def save_recording(cfg, notes, t0, t1):
-    """把錄到的 note 存成自包含 JSON(含 base64 icon),回傳檔案路徑。"""
+    """格式 v2:icon 以 sha256 去重內嵌(仍是單一自包含檔案),含 metadata 與簽章。"""
     import base64
+    import hashlib
     fixed = {k: int(v) for k, v in cfg.get("fixed_lanes", {}).items()}
     events = []
     used = set()
@@ -623,11 +670,13 @@ def save_recording(cfg, notes, t0, t1):
         while times[j] <= t - 1000:
             j += 1
         max_kps = max(max_kps, i - j + 1)
-    # 內嵌用到的 icon
+
+    # ── icon:以內容 sha256 去重,同一張圖只存一份 ──
     mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp"}
-    icons_b64 = {}
-    for k in used:
+    icon_blobs = {}     # hash -> data URL
+    key_icons = {}      # key  -> hash
+    for k in sorted(used):
         p = cfg["key_icons"].get(k)
         if not p:
             continue
@@ -635,15 +684,31 @@ def save_recording(cfg, notes, t0, t1):
         try:
             with open(fp, "rb") as f:
                 raw = f.read()
-            m = mime.get(os.path.splitext(fp)[1].lower(), "image/png")
-            icons_b64[k] = f"data:{m};base64," + base64.b64encode(raw).decode()
+            h = hashlib.sha256(raw).hexdigest()[:16]
+            if h not in icon_blobs:
+                m = mime.get(os.path.splitext(fp)[1].lower(), "image/png")
+                icon_blobs[h] = f"data:{m};base64," + base64.b64encode(raw).decode()
+            key_icons[k] = h
         except Exception as e:
             print(f"[warn] 錄製內嵌 icon 失敗 {p}: {e}")
+
     rec = {
-        "version": 1,
+        "version": 2,
         "app": "Key Visualizer",
+        "app_version": APP_VERSION,
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "duration_ms": max(1, int(round((t1 - t0) * 1000))),
+        # ── metadata(供社群網站使用,可留空)──
+        "meta": {
+            "game": cfg.get("meta_game", ""),
+            "job": cfg.get("meta_job", ""),
+            "server": cfg.get("meta_server", ""),
+            "character": cfg.get("meta_character", ""),
+            "note": cfg.get("meta_note", ""),
+            "preset": cfg.get("active_preset", ""),
+        },
+        "input_mode": "poll" if (IS_WIN and cfg.get("low_latency")) else "hook",
         "direction": cfg["direction"],
         "max_lanes": int(cfg["max_lanes"]),
         "palette": cfg["palette"],
@@ -654,13 +719,18 @@ def save_recording(cfg, notes, t0, t1):
         "total": len(events),
         "max_kps": max_kps,
         "events": events,
-        "icons": icons_b64,
+        "key_icons": key_icons,     # key -> icon hash
+        "icons": icon_blobs,        # hash -> data URL(v1 為 key -> data URL)
     }
+    rec["signature"] = sign_recording(rec)
+
     d = os.path.join(SCRIPT_DIR, "recordings")
     os.makedirs(d, exist_ok=True)
     fn = os.path.join(d, time.strftime("rec_%Y%m%d_%H%M%S") + ".json")
-    with open(fn, "w", encoding="utf-8") as f:
+    tmp = fn + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False)
+    os.replace(tmp, fn)
     print(f"[info] 錄製已儲存: {fn}")
     return fn
 
@@ -673,7 +743,8 @@ def value_text(cfg, item):
     if t == "pct":
         return f"{int(round(v * 100))}%"
     if t == "choice":
-        return item["names"][v][cur_lang(cfg)]
+        n = item["names"].get(v)
+        return n[cur_lang(cfg)] if n else str(v)   # 自訂值直接顯示原字串
     return str(v)
 
 
@@ -685,7 +756,8 @@ def change_value(cfg, item, delta):
         cfg[i] = not old
     elif t == "choice":
         ch = item["choices"]
-        cfg[i] = ch[(ch.index(old) + 1) % len(ch)]
+        idx = ch.index(old) if old in ch else -1     # 自訂值 → 從頭開始
+        cfg[i] = ch[(idx + 1) % len(ch)]
     elif t == "pct":
         cfg[i] = round(max(item["min"], min(item["max"], old + delta * item["step"])), 2)
     else:
@@ -854,6 +926,13 @@ def main():
         nonlocal bg
         if item_id == "max_lanes":
             lanes.set_max_lanes(cfg["max_lanes"])
+        if item_id == "chroma_color":
+            if cfg["chroma_color"] == "custom":
+                c = pick_color(DEFAULT_CONFIG["chroma_color"])
+                cfg["chroma_color"] = c or DEFAULT_CONFIG["chroma_color"]
+            if not cfg["chroma_key"]:      # 改顏色時自動開啟綠幕模式方便預覽
+                cfg["chroma_key"] = True
+            bg = current_bg()
         if item_id == "chroma_key":
             bg = current_bg()
         if item_id == "background_opacity":
@@ -1180,10 +1259,12 @@ def main():
             key = note["key"]
             if key in state.disabled or not lanes.allowed(key):
                 continue
-            # 鎖定模式:設定頁沒開時,不為陌生按鍵新增軌道
+            # 鎖定模式:只擋「非標準按鍵」(媒體鍵、Fn、IME、特殊掃描碼等),
+            # 標準鍵盤與滑鼠按鍵不受影響。設定頁開啟時一律顯示,方便設定。
             if (cfg["lock_keys"] and not settings_open
-                    and key not in lanes.fixed and key not in lanes.lanes
-                    and note.get("lane") is None):
+                    and key not in STD_KEYS
+                    and key not in cfg["key_icons"]
+                    and key not in lanes.fixed):
                 continue
             if key in lanes.fixed:
                 lane = lanes.fixed[key]

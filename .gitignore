@@ -11,6 +11,9 @@ __pycache__/
 venv/
 env/
 
+# ── 內部規劃文件(不公開)──
+PLAN.md
+
 # ── 程式執行產生的個人資料 ──
 config.json
 config.json.tmp
