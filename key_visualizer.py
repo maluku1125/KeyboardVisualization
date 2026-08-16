@@ -617,7 +617,7 @@ SETTING_ITEMS = [
     {"id": "always_on_top", "label": {"zh": "總是在最頂層", "en": "Always on top"}, "type": "bool"},
     {"id": "show_now_line", "label": {"zh": "顯示現在線 (前緣白線)", "en": "Show now-line"}, "type": "bool"},
     {"id": "show_stats", "label": {"zh": "顯示統計列", "en": "Show stats bar"}, "type": "bool"},
-    {"id": "chroma_key", "label": {"zh": "綠幕模式 (OBS 色度去背)", "en": "Chroma key mode (OBS)"}, "type": "bool"},
+    {"id": "chroma_key", "label": {"zh": "綠幕模式 (透明度失效時可用)", "en": "Chroma key (if opacity doesn't work)"}, "type": "bool"},
     {"id": "chroma_color", "label": {"zh": "綠幕顏色", "en": "Chroma color"}, "type": "choice",
      "choices": ["#00FF00", "#0000FF", "#FF00FF", "#00FFFF", "custom"],
      "names": {"#00FF00": {"zh": "綠", "en": "Green"}, "#0000FF": {"zh": "藍", "en": "Blue"},

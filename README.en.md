@@ -50,6 +50,27 @@ Recordings embed icons deduplicated by content hash (a skill image reused by sev
 
 "**Low-latency mode**" is on by default: key states are read by polling, with no system hooks installed — the program is completely outside the game's input path and **adds zero key latency**. The trade-off: taps shorter than one frame (~16 ms at 60 fps) may be missed. Turning it off switches to global hooks, which give the most precise timing (best for chart recording) but route every key event through this program before it reaches the game, potentially adding a few milliseconds under load. "FPS limit" (30–240) lowers CPU usage when reduced.
 
+## Antivirus False Positives
+
+This app hooks global key input, which looks like a keylogger to antivirus engines, so **false positives are common**. The usual symptom is the app closing itself after ~30 seconds, or an "access denied" error — that's the antivirus deleting the temp folder a one-file exe unpacks into.
+
+Fixes (any one of these):
+
+1. **Use the folder build** (`KeyVisualizer.zip` — extract it and run `KeyVisualizer.exe` inside). It doesn't unpack to a temp directory, so it is far less likely to be flagged.
+2. Add an exclusion: Windows Security → Virus & threat protection → Manage settings → Exclusions. Check "Protection history" first to confirm it was quarantined.
+3. Just run `key_visualizer.py` with Python instead of building an exe.
+
+A permanent fix requires a code-signing certificate (a few hundred USD per year).
+
+### Which build to download
+
+| Build | Best for | Downside |
+|---|---|---|
+| `KeyVisualizer.zip` (folder) | **Recommended**, most users | Must be extracted first |
+| `KeyVisualizer_single.exe` | Carrying on a USB stick | Most likely to trip antivirus, slower start |
+
+`build_exe.bat` produces both in one run — upload both and let users pick.
+
 ## Notes
 
 - Some anti-cheat systems may block global input hooks. Exclusive-fullscreen games cannot be overlaid — switch the game to borderless windowed mode.
