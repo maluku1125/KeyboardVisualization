@@ -48,6 +48,10 @@ SIGN_KEY = b"KeyVisualizer/rec-v2/2026"
 DEFAULT_CONFIG = {
     "language": "zh",                # "zh" 繁體中文 / "en" English
     "active_preset": "",             # 目前套用的 preset 名稱(顯示用)
+    "display_mode": "timeline",      # "timeline" 時間軸 / "push" 推擠列(新按鍵推入、舊的往旁邊擠)
+    "push_slots": 10,                # 推擠列最多顯示幾格
+    "push_fade_sec": 5,              # 推擠列:按下幾秒後淡出(0 = 不淡出)
+    "icon_key_label": False,         # 有圖示的按鍵也在左上角顯示鍵名
     "direction": "rtl",              # "rtl" 右到左 / "ltr" 左到右
     "window_width": 960,
     "window_height": 340,
@@ -291,6 +295,7 @@ class KeyState:
         self.rec = []
         self.rec_start = None
         self.req_clickthrough = False   # 全域 F8 請求切換點擊穿透
+        self.pushes = deque(maxlen=64)  # 推擠列用:最近按下的 note(新的在右端)
 
     def press(self, key, now):
         with self.lock:
@@ -298,6 +303,7 @@ class KeyState:
                 return
             note = {"key": key, "start": now, "end": None}
             self.active[key] = note
+            self.pushes.append(note)
             self.press_times.append(now)
             self.total += 1
             if self.recording:
@@ -335,6 +341,10 @@ class KeyState:
                 self.max_kps = kps
             return (list(self.notes), dict(self.active), kps, self.max_kps,
                     self.total, list(self.active.keys()))
+
+    def recent_pushes(self):
+        with self.lock:
+            return list(self.pushes)
 
     def reset_stats(self):
         with self.lock:
@@ -598,6 +608,13 @@ SETTING_ITEMS = [
     {"id": "language", "label": {"zh": "語言 Language", "en": "Language 語言"}, "type": "choice",
      "choices": ["zh", "en"], "names": {"zh": {"zh": "繁體中文", "en": "繁體中文"},
                                         "en": {"zh": "English", "en": "English"}}},
+    {"id": "display_mode", "label": {"zh": "顯示模式", "en": "Display mode"}, "type": "choice",
+     "choices": ["timeline", "push"], "names": {"timeline": {"zh": "時間軸", "en": "Timeline"},
+                                                "push": {"zh": "推擠列", "en": "Push row"}}},
+    {"id": "push_slots", "label": {"zh": "推擠列格數", "en": "Push row slots"}, "type": "int", "min": 3, "max": 30, "step": 1},
+    {"id": "push_fade_sec", "label": {"zh": "推擠列淡出秒數 (0=不淡出)", "en": "Push row fade (s, 0 = never)"},
+     "type": "int", "min": 0, "max": 30, "step": 1},
+    {"id": "icon_key_label", "label": {"zh": "圖示上顯示鍵名", "en": "Key name on icons"}, "type": "bool"},
     {"id": "max_lanes", "label": {"zh": "軌道數", "en": "Lanes"}, "type": "int", "min": 1, "max": 16, "step": 1},
     {"id": "background_opacity", "label": {"zh": "背景透明度 (0%=穿透)", "en": "BG opacity (0% = invisible)"},
      "type": "pct", "min": 0.0, "max": 1.0, "step": 0.05},
@@ -964,6 +981,98 @@ def main():
     def label_of(key):
         return cfg["key_labels"].get(key) or FALLBACK_LABELS.get(key) or key.upper()
 
+    tag_fonts = {}
+    tag_cache = {}
+
+    def key_tag(key, size):
+        """圖示左上角的小鍵名:白字黑框,疊在任何圖上都看得清楚。"""
+        fs = max(10, int(size * 0.24))
+        text = label_of(key)
+        ck = (text, fs)
+        if ck not in tag_cache:
+            if fs not in tag_fonts:
+                tag_fonts[fs] = make_font(fs, bold=True)
+            f = tag_fonts[fs]
+            fg = f.render(text, True, (255, 255, 255))
+            ol = f.render(text, True, (10, 10, 14))
+            surf = pygame.Surface((fg.get_width() + 2, fg.get_height() + 2), pygame.SRCALPHA)
+            for dx, dy in ((0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2)):
+                surf.blit(ol, (dx, dy))
+            surf.blit(fg, (1, 1))
+            tag_cache[ck] = surf
+        return tag_cache[ck]
+
+    ARROWS = {"up": ((0.5, 0.28), (0.76, 0.66), (0.24, 0.66)),
+              "down": ((0.5, 0.72), (0.76, 0.34), (0.24, 0.34)),
+              "left": ((0.28, 0.5), (0.66, 0.24), (0.66, 0.76)),
+              "right": ((0.72, 0.5), (0.34, 0.24), (0.34, 0.76))}
+    cap_fonts = {}
+
+    def keycap_glyph(key, fw, fh):
+        """鍵帽上的圖案(方向鍵三角形 / 鍵名),依鍵面大小快取。"""
+        ck = ("glyph", key, fw, fh)
+        if ck in icon_cache:
+            return icon_cache[ck]
+        ink = (88, 88, 98)
+        if key in ARROWS:
+            side = min(fw, fh)
+            g = pygame.Surface((side, side), pygame.SRCALPHA)
+            pygame.draw.polygon(g, ink, [(px_ * side, py_ * side) for px_, py_ in ARROWS[key]])
+        else:
+            fs = max(10, int(fh * 0.5))
+            if fs not in cap_fonts:
+                cap_fonts[fs] = make_font(fs, bold=True)
+            g = cap_fonts[fs].render(label_of(key), True, ink)
+            maxw = max(1, fw - 6)
+            if g.get_width() > maxw:
+                sc = maxw / g.get_width()
+                g = pygame.transform.smoothscale(g, (maxw, max(1, int(g.get_height() * sc))))
+        icon_cache[ck] = g
+        return g
+
+    def draw_keycap(target, r, key, radius, align="center"):
+        """沒設圖示的按鍵:白底鍵帽,方向鍵畫三角形,其他鍵寫鍵名。
+        r 可以是長條(時間軸按住拉長),圖案靠 align 那一端。"""
+        pygame.draw.rect(target, (128, 128, 136), r, border_radius=radius)                   # 外框
+        pygame.draw.rect(target, (196, 196, 204), r.inflate(-2, -2), border_radius=max(1, radius - 1))  # 底邊陰影
+        face = pygame.Rect(r.x + 2, r.y + 2, r.w - 4, r.h - 4 - max(2, r.h // 14))
+        if face.w < 2 or face.h < 2:
+            return
+        pygame.draw.rect(target, (238, 238, 242), face, border_radius=max(1, radius - 2))
+        if face.w > 4:
+            hi = pygame.Rect(face.x + 2, face.y + 2, face.w - 4, face.h // 2)             # 上半部亮面
+            pygame.draw.rect(target, (252, 252, 255), hi, border_radius=max(1, radius - 3))
+        gw = min(face.w, face.h) if key in ARROWS else face.w
+        if key not in ARROWS and align != "center":
+            gw = min(face.w, max(face.h, int(face.h * 2.2)))   # 長條時字只佔前端一段
+        g = keycap_glyph(key, gw, face.h)
+        if align == "right":
+            gx = face.right - gw + (gw - g.get_width()) // 2
+        elif align == "left":
+            gx = face.x + (gw - g.get_width()) // 2
+        else:
+            gx = face.centerx - g.get_width() // 2
+        target.blit(g, (gx, face.centery - g.get_height() // 2))
+
+    def blit_key_tag(target, key, rect):
+        tag = key_tag(key, rect.h)
+        if tag.get_width() > rect.w:     # 太長就縮到圖示寬度
+            sc = rect.w / tag.get_width()
+            tag = pygame.transform.smoothscale(tag, (rect.w, max(1, int(tag.get_height() * sc))))
+        target.blit(tag, (rect.x + 1, rect.y))
+
+    def key_visible(key):
+        if key in state.disabled or not lanes.allowed(key):
+            return False
+        # 鎖定模式:只擋「非標準按鍵」(媒體鍵、Fn、IME、特殊掃描碼等),
+        # 標準鍵盤與滑鼠按鍵不受影響。設定頁開啟時一律顯示,方便設定。
+        if (cfg["lock_keys"] and not settings_open
+                and key not in STD_KEYS
+                and key not in cfg["key_icons"]
+                and key not in lanes.fixed):
+            return False
+        return True
+
     # ── 按鍵頁動作 ──
     def choose_icon(key):
         path = pick_image_file()
@@ -1240,8 +1349,10 @@ def main():
                 screen.blit(surf, (W - surf.get_width() - 12, 24))
             pygame.draw.line(screen, (70, 70, 90), (0, top - 4), (W, top - 4), 1)
 
+        push_mode = cfg.get("display_mode") == "push"
+
         # ── 時間刻度 ──
-        if not cfg["chroma_key"] and not layered:
+        if not push_mode and not cfg["chroma_key"] and not layered:
             for s in range(int(history) + 1):
                 off = (now % 1.0 + s) * speed
                 x = W - off if direction == "rtl" else off
@@ -1253,18 +1364,11 @@ def main():
             return W - off if direction == "rtl" else off
 
         # ── 繪製 note ──
-        all_notes = done + list(active.values())
+        all_notes = [] if push_mode else done + list(active.values())
         visible_keys = {n["key"] for n in all_notes}
         for note in all_notes:
             key = note["key"]
-            if key in state.disabled or not lanes.allowed(key):
-                continue
-            # 鎖定模式:只擋「非標準按鍵」(媒體鍵、Fn、IME、特殊掃描碼等),
-            # 標準鍵盤與滑鼠按鍵不受影響。設定頁開啟時一律顯示,方便設定。
-            if (cfg["lock_keys"] and not settings_open
-                    and key not in STD_KEYS
-                    and key not in cfg["key_icons"]
-                    and key not in lanes.fixed):
+            if not key_visible(key):
                 continue
             if key in lanes.fixed:
                 lane = lanes.fixed[key]
@@ -1295,12 +1399,17 @@ def main():
             if x0 > W or x0 + wpx < 0:
                 continue
             r = pygame.Rect(int(x0), int(y), int(wpx), note_h)
+            if key not in icons:
+                col = (235, 235, 240)
             if note["end"] is None:
                 glow = pygame.Rect(r.x - 2, r.y - 2, r.w + 4, r.h + 4)
                 pygame.draw.rect(screen, tuple(min(255, c + 70) for c in col), glow, border_radius=radius + 2)
-            pygame.draw.rect(screen, col, r, border_radius=radius)
 
-            if key in icons:
+            if key not in icons:
+                align = ("right" if direction == "rtl" else "left") if cfg["show_hold"] else "center"
+                draw_keycap(screen, r, key, radius, align)
+            else:
+                pygame.draw.rect(screen, col, r, border_radius=radius)
                 cached = icon_cache.get(key)
                 if cached is None or cached[0] != note_h:   # 尺寸變了就重建
                     icon_cache[key] = (note_h, cover_icon(icons[key], note_h, note_h, radius))
@@ -1310,19 +1419,73 @@ def main():
                 else:
                     ix = r.x
                 screen.blit(img, (ix, r.y))
-            else:
-                if key not in label_cache:
-                    label_cache[key] = font.render(label_of(key), True, (15, 15, 20))
-                surf = label_cache[key]
-                if surf.get_width() <= r.w - 4:
-                    if cfg["show_hold"]:
-                        lx = r.right - surf.get_width() - 5 if direction == "rtl" else r.x + 5
-                    else:
-                        lx = r.centerx - surf.get_width() // 2
-                    screen.blit(surf, (lx, r.centery - surf.get_height() // 2))
+                if cfg["icon_key_label"]:
+                    blit_key_tag(screen, key, pygame.Rect(ix, r.y, img.get_width(), img.get_height()))
+
+        # ── 推擠列:新按鍵從前緣推入,舊的往後擠;超過格數或時間就淡出 ──
+        if push_mode:
+            slots = max(1, int(cfg["push_slots"]))
+            fade_after = float(cfg["push_fade_sec"])
+            slide_t, fade_t = 0.12, 0.4
+            gap = 4
+            area_top, area_bot = top + 4, H - 8
+            size = int(min(area_bot - area_top, (W - 16) / slots - gap))
+            size = max(12, size)
+            y = area_top + (area_bot - area_top - size) // 2
+            radius = max(3, size // 7)
+
+            def ease(p):
+                p = min(1.0, max(0.0, p))
+                return 1 - (1 - p) ** 3
+
+            entries = [n for n in state.recent_pushes() if key_visible(n["key"])][-(slots + 2):]
+            entries.reverse()                  # [0] = 最新
+            # 每個 note 的位置 = 所有比它新(含自己)的推入動畫進度總和 − 1;
+            # 不需要額外狀態,連打時也會平順地一格格擠過去
+            progress = [ease((now - n["start"]) / slide_t) for n in entries]
+            acc = 0.0
+            for i, note in enumerate(entries):
+                acc += progress[i]
+                pos = acc - 1.0
+                alpha = 1.0
+                if i == 0 or pos < 0:
+                    alpha = min(alpha, progress[i])        # 推入時淡入
+                if pos > slots - 1:
+                    alpha = min(alpha, max(0.0, slots - pos))   # 被擠出邊緣時淡出
+                if fade_after > 0 and note["end"] is not None:
+                    age = now - note["start"] - fade_after
+                    if age > 0:
+                        alpha = min(alpha, max(0.0, 1 - age / fade_t))
+                if alpha <= 0.01:
+                    continue
+                key = note["key"]
+                step = size + gap
+                x = (W - 8 - size - pos * step) if direction == "rtl" else (8 + pos * step)
+                cell = pygame.Surface((size + 4, size + 4), pygame.SRCALPHA)
+                r = pygame.Rect(2, 2, size, size)
+                col = color_of(key, lanes.fixed.get(key, sum(map(ord, key))))
+                if key not in icons:
+                    col = (235, 235, 240)
+                if note["end"] is None:          # 按住中:外框發亮
+                    pygame.draw.rect(cell, tuple(min(255, c + 70) for c in col),
+                                     cell.get_rect(), border_radius=radius + 2)
+                if key in icons:
+                    pygame.draw.rect(cell, col, r, border_radius=radius)
+                    ck = ("push", key)
+                    cached = icon_cache.get(ck)
+                    if cached is None or cached[0] != size:
+                        icon_cache[ck] = (size, cover_icon(icons[key], size, size, radius))
+                    cell.blit(icon_cache[ck][1], r.topleft)
+                    if cfg["icon_key_label"]:
+                        blit_key_tag(cell, key, r)
+                else:
+                    draw_keycap(cell, r, key, radius)
+                if alpha < 0.999:
+                    cell.set_alpha(int(alpha * 255))
+                screen.blit(cell, (int(x) - 2, y - 2))
 
         # ── 現在線 ──
-        if cfg["show_now_line"]:
+        if cfg["show_now_line"] and not push_mode:
             edge_x = W - 1 if direction == "rtl" else 1
             pygame.draw.line(screen, (255, 255, 255), (edge_x, top), (edge_x, H - 6), 2)
 
