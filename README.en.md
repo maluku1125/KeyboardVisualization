@@ -19,7 +19,7 @@ Pressed keys (including mouse buttons) scroll across a timeline as rounded squar
 
 Three tabs; every change applies instantly and is saved to `config.json`:
 
-- **General**: language (中/EN), display mode (timeline / push row), push row slots and fade time, key name on icons, lane count, background opacity, hold length display (off = fixed squares), mouse tracking, click-through, key lock (unknown keys are only added while settings are open), scroll direction & speed, auto record, window size, always on top, now-line, stats bar, chroma-key mode.
+- **General**: language (中/EN), display mode (timeline / push row), push row slots and fade time, key name on icons, lane count, background opacity, hold length display (off = fixed squares), mouse tracking, click-through, key lock (unknown keys are only added while settings are open), scroll direction & speed, recording on/off (off = F4 does nothing, no auto record), auto record, window size, always on top, now-line, stats bar, chroma-key mode.
 - **Keys**: the full keyboard in QWERTY physical order plus mouse buttons (scroll with wheel). Per key: **Icon** to pick a custom image, **✕** to clear it, **Disable** to hide the key, and **− / +** to pin it to a fixed lane ("Auto" = dynamic).
 - **Presets**: save your current key setup (icons, fixed lanes, disabled keys, labels, colors, lane count) as named presets and switch with one click — handy for different games with different icon sets. Stored in `presets/`.
 

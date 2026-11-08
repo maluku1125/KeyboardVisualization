@@ -76,6 +76,7 @@ DEFAULT_CONFIG = {
     "fps_limit": 60,                 # 畫面更新率上限
     "click_through": False,          # 點擊穿透(僅透明模式,全域 F8 切換)
     "lock_keys": True,               # 鎖定:非設定頁面開啟時,不自動新增按鍵軌道
+    "recording_enabled": True,       # False 時整個錄製功能關閉(F4 無作用、不自動錄)
     "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
     # 錄製 metadata(寫進紀錄檔,供社群網站顯示;可留空)
     "meta_game": "MapleStory",
@@ -117,6 +118,8 @@ STR = {
                 "en": "Key Visualizer  |  F1 Direction  F2 Reset  F3 Settings  F4 Record  ESC Quit"},
     "hint": {"zh": "F3 設定  F4 錄製  F8 穿透", "en": "F3 Settings  F4 Record  F8 Click-thru"},
     "hint_ct": {"zh": "F3 設定  F4 錄製  F8 穿透中", "en": "F3 Settings  F4 Record  F8 Thru: ON"},
+    "hint_nr": {"zh": "F3 設定  F8 穿透", "en": "F3 Settings  F8 Click-thru"},
+    "hint_ct_nr": {"zh": "F3 設定  F8 穿透中", "en": "F3 Settings  F8 Thru: ON"},
     "settings": {"zh": "設定", "en": "Settings"},
     "tab_general": {"zh": "一般", "en": "General"},
     "tab_keys": {"zh": "按鍵", "en": "Keys"},
@@ -628,6 +631,7 @@ SETTING_ITEMS = [
      "choices": ["rtl", "ltr"], "names": {"rtl": {"zh": "右 → 左", "en": "Right → Left"},
                                           "ltr": {"zh": "左 → 右", "en": "Left → Right"}}},
     {"id": "scroll_speed", "label": {"zh": "滑動速度", "en": "Scroll speed"}, "type": "int", "min": 60, "max": 600, "step": 20},
+    {"id": "recording_enabled", "label": {"zh": "錄製功能 (F4)", "en": "Recording (F4)"}, "type": "bool"},
     {"id": "auto_record", "label": {"zh": "自動錄製 (啟動即錄)", "en": "Auto record on launch"}, "type": "bool"},
     {"id": "window_width", "label": {"zh": "視窗寬度", "en": "Window width"}, "type": "int", "min": 320, "max": 3840, "step": 40},
     {"id": "window_height", "label": {"zh": "視窗高度", "en": "Window height"}, "type": "int", "min": 160, "max": 2160, "step": 20},
@@ -828,7 +832,7 @@ def main():
         except (IndexError, ValueError):
             pass
     app_start = time.time()
-    if cfg["auto_record"] or "--record" in sys.argv:
+    if cfg["recording_enabled"] and (cfg["auto_record"] or "--record" in sys.argv):
         state.start_record(app_start)
 
     pygame.init()
@@ -943,6 +947,10 @@ def main():
         nonlocal bg
         if item_id == "max_lanes":
             lanes.set_max_lanes(cfg["max_lanes"])
+        if item_id == "recording_enabled" and not cfg["recording_enabled"] and state.recording:
+            notes, t0 = state.stop_record()      # 錄到一半關掉:先把已錄的存檔,不丟資料
+            if notes:
+                save_recording(cfg, notes, t0, time.time())
         if item_id == "chroma_color":
             if cfg["chroma_color"] == "custom":
                 c = pick_color(DEFAULT_CONFIG["chroma_color"])
@@ -1236,7 +1244,7 @@ def main():
                     state.reset_stats()
                 elif ev.key == pygame.K_F3:
                     settings_open = not settings_open
-                elif ev.key == pygame.K_F4:
+                elif ev.key == pygame.K_F4 and cfg["recording_enabled"]:
                     if state.recording:
                         notes, t0 = state.stop_record()
                         if notes:
@@ -1333,6 +1341,8 @@ def main():
             screen.blit(stats_surf, (12, 10))
             stats_w = 12 + stats_surf.get_width()
             hint_key = "hint_ct" if (ct_active or (layered and cfg["click_through"])) else "hint"
+            if not cfg["recording_enabled"]:
+                hint_key += "_nr"
             hint = font.render(tr(cfg, hint_key), True, (150, 150, 170))
             screen.blit(hint, (W - hint.get_width() - 12, 4))
         if state.recording:
