@@ -17,8 +17,20 @@ if errorlevel 1 (
     )
 )
 
+REM ---- App icon: if icon.png exists, use it for the exe and the window (PyInstaller needs Pillow) ----
+set ICON_ARGS=
+if exist icon.png (
+    pip show pillow >nul 2>&1
+    if errorlevel 1 pip install pillow
+    set ICON_ARGS=--icon icon.png --add-data "icon.png;."
+    echo Using icon.png
+) else (
+    echo [INFO] icon.png not found - using default icon.
+)
+echo.
+
 echo [1/3] Folder build (antivirus-friendly, recommended)...
-python -m PyInstaller --onedir --noconsole --name KeyVisualizer --clean --noconfirm key_visualizer.py
+python -m PyInstaller --onedir --noconsole --name KeyVisualizer --clean --noconfirm %ICON_ARGS% key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Folder build failed. Copy the error message above to Claude.
     pause
@@ -27,7 +39,7 @@ if errorlevel 1 (
 
 echo.
 echo [2/3] Single-file build (portable, more AV false positives)...
-python -m PyInstaller --onefile --noconsole --name KeyVisualizer_single --noconfirm key_visualizer.py
+python -m PyInstaller --onefile --noconsole --name KeyVisualizer_single --noconfirm %ICON_ARGS% key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Single-file build failed.
     pause
@@ -36,7 +48,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/3] Lite folder build (no recording)...
-python -m PyInstaller --onedir --noconsole --name KeyVisualizer_Lite --noconfirm key_visualizer_lite.py
+python -m PyInstaller --onedir --noconsole --name KeyVisualizer_Lite --noconfirm %ICON_ARGS% key_visualizer_lite.py
 if errorlevel 1 (
     echo [ERROR] Lite build failed.
     pause

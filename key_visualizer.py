@@ -675,6 +675,7 @@ if IS_WIN:
 
 # ── 一般設定項目(label/names 皆為 zh/en 雙語)──────────────
 SETTING_ITEMS = [
+    {"id": "target_window", "label": {"zh": "鎖定視窗 (切出時不讀取)", "en": "Lock to window"}, "type": "target"},
     {"id": "language", "label": {"zh": "語言 Language", "en": "Language 語言"}, "type": "choice",
      "choices": ["zh", "en"], "names": {"zh": {"zh": "繁體中文", "en": "繁體中文"},
                                         "en": {"zh": "English", "en": "English"}}},
@@ -698,7 +699,6 @@ SETTING_ITEMS = [
      "choices": ["rtl", "ltr"], "names": {"rtl": {"zh": "右 → 左", "en": "Right → Left"},
                                           "ltr": {"zh": "左 → 右", "en": "Left → Right"}}},
     {"id": "scroll_speed", "label": {"zh": "滑動速度", "en": "Scroll speed"}, "type": "int", "min": 60, "max": 600, "step": 20},
-    {"id": "target_window", "label": {"zh": "鎖定視窗 (切出時不讀取)", "en": "Lock to window"}, "type": "target"},
     {"id": "recording_enabled", "label": {"zh": "錄製功能 (F4)", "en": "Recording (F4)"}, "type": "bool"},
     {"id": "auto_record", "label": {"zh": "自動錄製 (啟動即錄)", "en": "Auto record on launch"}, "type": "bool"},
     {"id": "window_width", "label": {"zh": "視窗寬度", "en": "Window width"}, "type": "int", "min": 320, "max": 3840, "step": 40},
@@ -859,6 +859,19 @@ def change_value(cfg, item, delta):
     return cfg[i] != old
 
 
+def set_app_icon():
+    """視窗/工作列圖示:優先用 exe 旁的 icon.png(可自行替換),其次用打包內附的。"""
+    dirs = [SCRIPT_DIR, getattr(sys, "_MEIPASS", SCRIPT_DIR)]
+    for d in dirs:
+        fp = os.path.join(d, "icon.png")
+        if os.path.exists(fp):
+            try:
+                pygame.display.set_icon(pygame.image.load(fp))
+                return
+            except Exception as e:
+                print(f"[warn] 圖示載入失敗 {fp}: {e}")
+
+
 def main():
     demo = "--demo" in sys.argv
     cfg = load_config()
@@ -918,6 +931,7 @@ def main():
         state.start_record(app_start)
 
     pygame.init()
+    set_app_icon()
     W, H = int(cfg["window_width"]), int(cfg["window_height"])
     pygame.display.set_caption(tr(cfg, caption_key))
     clock = pygame.time.Clock()
