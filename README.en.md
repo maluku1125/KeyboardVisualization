@@ -78,10 +78,11 @@ A permanent fix requires a code-signing certificate (a few hundred USD per year)
 | `KeyVisualizer.zip` (folder) | **Recommended**, most users | Must be extracted first |
 | `KeyVisualizer_single.exe` | Carrying on a USB stick | Most likely to trip antivirus, slower start |
 | `KeyVisualizer_Lite.zip` (no recording) | Streaming only, guaranteed no key logs on disk | No F4 / auto record |
+| `KeyVisualizer_Lite_single.exe` (no recording) | Lite + portable | Same, plus more antivirus false positives |
 
 The Lite build removes recording entirely: F4 does nothing, recording options are hidden, and no `recordings/` folder is created. Everything else is identical. It does **not** reduce antivirus false positives (those come from key capture itself). From source: `python key_visualizer_lite.py`.
 
-`build_exe.bat` produces all three in one run — upload them all and let users pick.
+`build_exe.bat` produces all four in one run — upload them all and let users pick.
 
 ## Notes
 

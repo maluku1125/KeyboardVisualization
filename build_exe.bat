@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ============================================
-echo  Build Key Visualizer  (folder + single + Lite)
+echo  Build Key Visualizer  (full + Lite, folder + single)
 echo ============================================
 echo.
 
@@ -29,7 +29,7 @@ if exist icon.png (
 )
 echo.
 
-echo [1/3] Folder build (antivirus-friendly, recommended)...
+echo [1/4] Folder build (antivirus-friendly, recommended)...
 python -m PyInstaller --onedir --noconsole --name KeyVisualizer --clean --noconfirm %ICON_ARGS% key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Folder build failed. Copy the error message above to Claude.
@@ -38,7 +38,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/3] Single-file build (portable, more AV false positives)...
+echo [2/4] Single-file build (portable, more AV false positives)...
 python -m PyInstaller --onefile --noconsole --name KeyVisualizer_single --noconfirm %ICON_ARGS% key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Single-file build failed.
@@ -47,10 +47,19 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Lite folder build (no recording)...
+echo [3/4] Lite folder build (no recording)...
 python -m PyInstaller --onedir --noconsole --name KeyVisualizer_Lite --noconfirm %ICON_ARGS% key_visualizer_lite.py
 if errorlevel 1 (
     echo [ERROR] Lite build failed.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [4/4] Lite single-file build (no recording, portable)...
+python -m PyInstaller --onefile --noconsole --name KeyVisualizer_Lite_single --noconfirm %ICON_ARGS% key_visualizer_lite.py
+if errorlevel 1 (
+    echo [ERROR] Lite single-file build failed.
     pause
     exit /b 1
 )
@@ -80,10 +89,11 @@ if errorlevel 1 (
 
 echo.
 echo ============================================
-echo  Done. Upload these three:
+echo  Done. Upload these four:
 echo    dist\KeyVisualizer.zip          (folder build - recommended)
 echo    dist\KeyVisualizer_single.exe   (single file - portable)
-echo    dist\KeyVisualizer_Lite.zip     (no recording)
+echo    dist\KeyVisualizer_Lite.zip          (no recording - folder)
+echo    dist\KeyVisualizer_Lite_single.exe   (no recording - single file)
 echo ============================================
 if exist dist\KeyVisualizer.zip explorer /select,"%cd%\dist\KeyVisualizer.zip"
 pause

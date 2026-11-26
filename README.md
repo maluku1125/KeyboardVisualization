@@ -76,10 +76,11 @@
 | `KeyVisualizer.zip`(資料夾版) | **推薦**,大多數人 | 要先解壓縮,檔案較多 |
 | `KeyVisualizer_single.exe`(單檔版) | 想隨身帶著跑 | 較容易被防毒誤判、啟動較慢 |
 | `KeyVisualizer_Lite.zip`(無錄製版) | 只需要實況顯示、想確保不留下任何按鍵紀錄 | 沒有 F4 錄製與自動錄製 |
+| `KeyVisualizer_Lite_single.exe`(無錄製單檔版) | 無錄製版 + 隨身攜帶 | 同上,且較容易被防毒誤判 |
 
 無錄製版完全移除錄製功能:F4 無作用、設定頁沒有錄製選項、不會產生 `recordings/`。其餘功能相同。注意它**不會**降低防毒誤判(誤判來自按鍵監聽本身)。原始碼執行方式為 `python key_visualizer_lite.py`。
 
-`build_exe.bat` 會一次產生這三個版本,全部放上發佈頁讓使用者自選。
+`build_exe.bat` 會一次產生這四個版本,全部放上發佈頁讓使用者自選。
 
 ## 注意
 
