@@ -41,6 +41,8 @@ except ImportError:
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
 IS_WIN = sys.platform == "win32"
 APP_VERSION = "1.2.0"
+# 打包旗標:False = 無錄製版 (Lite),完全移除錄製功能。由 key_visualizer_lite.py 設定。
+RECORDING_AVAILABLE = True
 # 紀錄檔簽章金鑰。隨程式散布,只用來區分「程式產生」與「手動編輯」,
 # 不是安全機制;網站端仍應搭配異常偵測與影片佐證。
 SIGN_KEY = b"KeyVisualizer/rec-v2/2026"
@@ -78,6 +80,8 @@ DEFAULT_CONFIG = {
     "lock_keys": True,               # 鎖定:非設定頁面開啟時,不自動新增按鍵軌道
     "recording_enabled": True,       # False 時整個錄製功能關閉(F4 無作用、不自動錄)
     "auto_record": False,            # 啟動就自動開始錄製(F4 也可隨時開始/停止)
+    "target_window": "",             # 鎖定視窗:目標程式檔名(例 "maplestory.exe"),空 = 不鎖定
+    "target_title": "",              # 鎖定視窗備援:查不到程式名稱時(受保護程序)改比對視窗標題
     # 錄製 metadata(寫進紀錄檔,供社群網站顯示;可留空)
     "meta_game": "MapleStory",
     "meta_job": "",
@@ -118,6 +122,14 @@ STR = {
                 "en": "Key Visualizer  |  F1 Direction  F2 Reset  F3 Settings  F4 Record  ESC Quit"},
     "hint": {"zh": "F3 設定  F4 錄製  F8 穿透", "en": "F3 Settings  F4 Record  F8 Click-thru"},
     "hint_ct": {"zh": "F3 設定  F4 錄製  F8 穿透中", "en": "F3 Settings  F4 Record  F8 Thru: ON"},
+    "caption_nr": {"zh": "Key Visualizer Lite  |  F1 方向  F2 重置  F3 設定  ESC 離開",
+                   "en": "Key Visualizer Lite  |  F1 Direction  F2 Reset  F3 Settings  ESC Quit"},
+    "target_none": {"zh": "全部視窗", "en": "All windows"},
+    "target_pick": {"zh": "{n} 秒後擷取…", "en": "Capturing in {n}…"},
+    "target_set_msg": {"zh": "已鎖定視窗:{n}", "en": "Locked to: {n}"},
+    "target_clear_msg": {"zh": "已取消鎖定視窗", "en": "Window lock cleared"},
+    "target_fail_msg": {"zh": "請在倒數結束前切換到遊戲視窗", "en": "Switch to the game window before the countdown ends"},
+    "target_paused": {"zh": "|| 非鎖定視窗,暫停讀取", "en": "|| Not the locked window - paused"},
     "hint_nr": {"zh": "F3 設定  F8 穿透", "en": "F3 Settings  F8 Click-thru"},
     "hint_ct_nr": {"zh": "F3 設定  F8 穿透中", "en": "F3 Settings  F8 Thru: ON"},
     "settings": {"zh": "設定", "en": "Settings"},
@@ -299,8 +311,11 @@ class KeyState:
         self.rec_start = None
         self.req_clickthrough = False   # 全域 F8 請求切換點擊穿透
         self.pushes = deque(maxlen=64)  # 推擠列用:最近按下的 note(新的在右端)
+        self.capture = True             # 鎖定視窗:False 時(前景不是目標視窗)忽略所有按下
 
     def press(self, key, now):
+        if not self.capture:
+            return
         with self.lock:
             if key in self.disabled or key in self.active:
                 return
@@ -332,6 +347,13 @@ class KeyState:
             if note:
                 note["end"] = now
                 self.notes.append(note)
+
+    def release_all(self, now):
+        with self.lock:
+            for note in self.active.values():
+                note["end"] = now
+                self.notes.append(note)
+            self.active.clear()
 
     def snapshot(self, now, history):
         with self.lock:
@@ -570,6 +592,51 @@ if IS_WIN:
 
     _GetAsyncKeyState = _user32.GetAsyncKeyState
 
+    # ── 鎖定視窗:查詢前景視窗所屬程式 ──
+    _kernel32 = ctypes.windll.kernel32
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                     wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _exe_cache = {}     # pid -> 小寫程式檔名("" = 查不到,例如受保護的反作弊程序)
+
+    def win_foreground():
+        """回傳 (pid, 程式檔名小寫);沒有前景視窗時 pid = 0。"""
+        hwnd = _user32.GetForegroundWindow()
+        if not hwnd:
+            return 0, ""
+        pid = wintypes.DWORD()
+        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        pid = pid.value
+        exe = _exe_cache.get(pid)
+        if exe is None:
+            exe = ""
+            h = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if h:
+                buf = ctypes.create_unicode_buffer(1024)
+                n = wintypes.DWORD(1024)
+                if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                    exe = os.path.basename(buf.value).lower()
+                _kernel32.CloseHandle(h)
+            if len(_exe_cache) > 256:
+                _exe_cache.clear()
+            _exe_cache[pid] = exe
+        return pid, exe
+
+    def win_foreground_title():
+        hwnd = _user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        buf = ctypes.create_unicode_buffer(512)
+        _user32.GetWindowTextW(hwnd, buf, 512)
+        return buf.value
+
     def win_layered_update(hwnd, surf):
         """把 SRCALPHA surface 推上分層視窗(premultiplied ARGB)。"""
         w, h = surf.get_size()
@@ -631,6 +698,7 @@ SETTING_ITEMS = [
      "choices": ["rtl", "ltr"], "names": {"rtl": {"zh": "右 → 左", "en": "Right → Left"},
                                           "ltr": {"zh": "左 → 右", "en": "Left → Right"}}},
     {"id": "scroll_speed", "label": {"zh": "滑動速度", "en": "Scroll speed"}, "type": "int", "min": 60, "max": 600, "step": 20},
+    {"id": "target_window", "label": {"zh": "鎖定視窗 (切出時不讀取)", "en": "Lock to window"}, "type": "target"},
     {"id": "recording_enabled", "label": {"zh": "錄製功能 (F4)", "en": "Recording (F4)"}, "type": "bool"},
     {"id": "auto_record", "label": {"zh": "自動錄製 (啟動即錄)", "en": "Auto record on launch"}, "type": "bool"},
     {"id": "window_width", "label": {"zh": "視窗寬度", "en": "Window width"}, "type": "int", "min": 320, "max": 3840, "step": 40},
@@ -759,6 +827,11 @@ def save_recording(cfg, notes, t0, t1):
 def value_text(cfg, item):
     v = cfg[item["id"]]
     t = item["type"]
+    if t == "target":
+        name = cfg["target_window"] or cfg["target_title"]
+        if not name:
+            return tr(cfg, "target_none")
+        return name if len(name) <= 16 else name[:15] + "…"
     if t == "bool":
         return tr(cfg, "on") if v else tr(cfg, "off")
     if t == "pct":
@@ -817,6 +890,15 @@ def main():
     def polling_mode():
         return IS_WIN and cfg["low_latency"] and not demo
 
+    def rec_on():
+        return RECORDING_AVAILABLE and cfg["recording_enabled"]
+
+    # Lite 版隱藏錄製相關設定;非 Windows 隱藏鎖定視窗
+    setting_items = [it for it in SETTING_ITEMS
+                     if (RECORDING_AVAILABLE or it["id"] not in ("recording_enabled", "auto_record"))
+                     and (IS_WIN or it["id"] != "target_window")]
+    caption_key = "caption" if RECORDING_AVAILABLE else "caption_nr"
+
     if demo:
         start_demo(state)
     elif not polling_mode():
@@ -832,12 +914,12 @@ def main():
         except (IndexError, ValueError):
             pass
     app_start = time.time()
-    if cfg["recording_enabled"] and (cfg["auto_record"] or "--record" in sys.argv):
+    if rec_on() and (cfg["auto_record"] or "--record" in sys.argv):
         state.start_record(app_start)
 
     pygame.init()
     W, H = int(cfg["window_width"]), int(cfg["window_height"])
-    pygame.display.set_caption(tr(cfg, "caption"))
+    pygame.display.set_caption(tr(cfg, caption_key))
     clock = pygame.time.Clock()
 
     display = None
@@ -967,7 +1049,7 @@ def main():
         if item_id == "always_on_top" and IS_WIN:
             win_set_topmost(hwnd, layered or cfg["always_on_top"])
         if item_id == "language":
-            pygame.display.set_caption(tr(cfg, "caption"))
+            pygame.display.set_caption(tr(cfg, caption_key))
         if item_id == "low_latency" and not demo:
             if polling_mode():
                 stop_hooks()
@@ -1198,6 +1280,41 @@ def main():
         nonlocal toast
         toast = (text, time.time() + 2.0)
 
+    # ── 鎖定視窗 ──
+    own_pid = os.getpid()
+    pick_deadline = None   # 選擇視窗倒數的截止時間
+
+    def start_pick_target():
+        nonlocal pick_deadline
+        pick_deadline = time.time() + 3.0
+
+    def finish_pick_target():
+        pid, exe = win_foreground()
+        if not pid or pid == own_pid:
+            show_toast(tr(cfg, "target_fail_msg"))
+            return
+        title = win_foreground_title()
+        cfg["target_window"] = exe
+        cfg["target_title"] = "" if exe else title
+        save_config(cfg)
+        show_toast(tr(cfg, "target_set_msg").format(n=exe or title))
+
+    def clear_target():
+        cfg["target_window"] = ""
+        cfg["target_title"] = ""
+        save_config(cfg)
+        show_toast(tr(cfg, "target_clear_msg"))
+
+    def capture_allowed():
+        if demo or not IS_WIN or not (cfg["target_window"] or cfg["target_title"]):
+            return True
+        pid, exe = win_foreground()
+        if pid == own_pid:              # 自己的視窗(設定頁、對話框)永遠可讀取
+            return True
+        if cfg["target_window"]:
+            return exe == cfg["target_window"].lower()
+        return win_foreground_title() == cfg["target_title"]
+
     def ask_confirm(msg, cb):
         nonlocal confirm
         confirm = {"msg": msg, "cb": cb}
@@ -1244,7 +1361,7 @@ def main():
                     state.reset_stats()
                 elif ev.key == pygame.K_F3:
                     settings_open = not settings_open
-                elif ev.key == pygame.K_F4 and cfg["recording_enabled"]:
+                elif ev.key == pygame.K_F4 and rec_on():
                     if state.recording:
                         notes, t0 = state.stop_record()
                         if notes:
@@ -1290,12 +1407,25 @@ def main():
 
         now = time.time()
 
+        if pick_deadline is not None and now >= pick_deadline:
+            pick_deadline = None
+            finish_pick_target()
+
+        # ── 鎖定視窗:前景不是目標時暫停讀取,按住中的鍵全部放開 ──
+        capture_ok = capture_allowed()
+        if capture_ok != state.capture:
+            state.capture = capture_ok
+            if not capture_ok:
+                state.release_all(now)
+
         # ── 低延遲模式:輪詢按鍵狀態(不掛 hook,零輸入延遲)──
         if polling_mode():
             pressed_now = set()
             mouse_off = not cfg["track_mouse"]
             for vk, name in VK_MAP.items():
                 if mouse_off and vk <= 0x06:
+                    continue
+                if not capture_ok and name != "f8":    # F8 穿透切換維持全域可用
                     continue
                 if _GetAsyncKeyState(vk) & 0x8000:
                     pressed_now.add(name)
@@ -1341,7 +1471,7 @@ def main():
             screen.blit(stats_surf, (12, 10))
             stats_w = 12 + stats_surf.get_width()
             hint_key = "hint_ct" if (ct_active or (layered and cfg["click_through"])) else "hint"
-            if not cfg["recording_enabled"]:
+            if not rec_on():
                 hint_key += "_nr"
             hint = font.render(tr(cfg, hint_key), True, (150, 150, 170))
             screen.blit(hint, (W - hint.get_width() - 12, 4))
@@ -1511,7 +1641,7 @@ def main():
                  | set(lanes.last_used)) - set(all_keys_order))
             presets = list_presets()
             if settings_page == "general":
-                page_items = SETTING_ITEMS
+                page_items = setting_items
             elif settings_page == "keys":
                 page_items = known_keys
             else:
@@ -1545,18 +1675,33 @@ def main():
             body_y = py + 50
 
             if settings_page == "general":
-                max_scroll_g = max(0, len(SETTING_ITEMS) - visible_rows)
+                max_scroll_g = max(0, len(setting_items) - visible_rows)
                 key_scroll = min(key_scroll, max_scroll_g)
-                shown_items = SETTING_ITEMS[key_scroll:key_scroll + visible_rows]
+                shown_items = setting_items[key_scroll:key_scroll + visible_rows]
                 if max_scroll_g > 0:
-                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_items)} / {len(SETTING_ITEMS)}  {tr(cfg, 'scroll')}",
+                    sc_txt = font.render(f"{key_scroll + 1}-{key_scroll + len(shown_items)} / {len(setting_items)}  {tr(cfg, 'scroll')}",
                                          True, (140, 140, 160))
                     screen.blit(sc_txt, (px + pw - sc_txt.get_width() - 16, py + 16))
                 for idx, item in enumerate(shown_items):
                     ry = body_y + idx * row_h
                     screen.blit(font.render(item["label"][lang], True, (210, 210, 220)), (px + 16, ry + 8))
                     val = font.render(value_text(cfg, item), True, (150, 220, 255))
-                    if item["type"] in ("int", "pct"):
+                    if item["type"] == "target":
+                        if pick_deadline is not None:
+                            n = max(1, int(pick_deadline - now + 0.999))
+                            val = font.render(tr(cfg, "target_pick").format(n=n), True, (255, 210, 120))
+                        btn = pygame.Rect(px + pw - 148, ry + 4, 132, 26)
+                        pygame.draw.rect(screen, (55, 55, 75), btn, border_radius=6)
+                        screen.blit(val, (btn.centerx - val.get_width() // 2, ry + 8))
+                        hit_rects.append((btn, start_pick_target))
+                        if cfg["target_window"] or cfg["target_title"]:
+                            clr = pygame.Rect(btn.x - 34, ry + 4, 28, 26)
+                            pygame.draw.rect(screen, (90, 50, 55), clr, border_radius=6)
+                            c, r = clr.center, 6     # 用線畫 X,避免字型缺字
+                            pygame.draw.line(screen, (240, 200, 200), (c[0] - r, c[1] - r), (c[0] + r, c[1] + r), 2)
+                            pygame.draw.line(screen, (240, 200, 200), (c[0] - r, c[1] + r), (c[0] + r, c[1] - r), 2)
+                            hit_rects.append((clr, clear_target))
+                    elif item["type"] in ("int", "pct"):
                         plus = pygame.Rect(px + pw - 44, ry + 4, 28, 26)
                         minus = pygame.Rect(px + pw - 148, ry + 4, 28, 26)
                         for rect, sign in ((minus, "−"), (plus, "+")):
@@ -1716,6 +1861,11 @@ def main():
 
             hit_rects = [(ok_btn, _do), (no_btn, _cancel)]   # 對話框開啟時只接受這兩個
 
+        # ── 鎖定視窗暫停中提示 ──
+        if not state.capture and not settings_open:
+            ps = font.render(tr(cfg, "target_paused"), True, (255, 190, 110))
+            screen.blit(ps, (12, H - ps.get_height() - 6))
+
         # ── 提示訊息 (toast) ──
         if toast:
             if time.time() > toast[1]:
@@ -1749,7 +1899,7 @@ def main():
     pygame.quit()
 
 
-if __name__ == "__main__":
+def run():
     try:
         main()
     except Exception:
@@ -1764,3 +1914,7 @@ if __name__ == "__main__":
         except Exception:
             pass   # --noconsole 打包的 exe 沒有 stdin
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()

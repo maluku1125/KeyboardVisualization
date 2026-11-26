@@ -19,7 +19,7 @@ Pressed keys (including mouse buttons) scroll across a timeline as rounded squar
 
 Three tabs; every change applies instantly and is saved to `config.json`:
 
-- **General**: language (中/EN), display mode (timeline / push row), push row slots and fade time, key name on icons, lane count, background opacity, hold length display (off = fixed squares), mouse tracking, click-through, key lock (unknown keys are only added while settings are open), scroll direction & speed, recording on/off (off = F4 does nothing, no auto record), auto record, window size, always on top, now-line, stats bar, chroma-key mode.
+- **General**: language (中/EN), display mode (timeline / push row), push row slots and fade time, key name on icons, lane count, background opacity, hold length display (off = fixed squares), mouse tracking, click-through, key lock (unknown keys are only added while settings are open), scroll direction & speed, window lock, recording on/off (off = F4 does nothing, no auto record), auto record, window size, always on top, now-line, stats bar, chroma-key mode.
 - **Keys**: the full keyboard in QWERTY physical order plus mouse buttons (scroll with wheel). Per key: **Icon** to pick a custom image, **✕** to clear it, **Disable** to hide the key, and **− / +** to pin it to a fixed lane ("Auto" = dynamic).
 - **Presets**: save your current key setup (icons, fixed lanes, disabled keys, labels, colors, lane count) as named presets and switch with one click — handy for different games with different icon sets. Stored in `presets/`.
 
@@ -27,6 +27,15 @@ Three tabs; every change applies instantly and is saved to `config.json`:
 
 - Press F4 to start/stop, or enable "Auto record" (records from launch, saves on exit). Recordings are saved to `recordings/rec_<timestamp>.json` and contain every key event plus lanes, colors, labels, and base64-embedded key icons — a single shareable file.
 - **Viewer**: <https://maluku1125.github.io/KeyboardVisualization/> (this is `index.html`, a fully static page). Drag & drop a recording to see the entire chart: wheel zoom, drag pan, click to seek, playback (Space, 0.5×–4×), KPS graph and stats. Files are parsed locally in your browser — nothing is uploaded.
+
+## Window Lock
+
+Click "Lock to window" in settings: a 3-second countdown starts — switch to your game before it ends and its process name (e.g. `maplestory.exe`) is remembered. From then on keys are read only while the game is in the foreground; in Discord, a browser or any other window nothing is read or recorded, held keys are released, and a "paused" notice appears in the bottom-left corner.
+
+- The app's own window (settings) is always read, and F8 click-through stays global.
+- Survives game restarts (it matches the process name, not the window). If anti-cheat protection hides the process name, the window title is matched instead.
+- Click ✕ to clear the lock and read all windows again.
+- If the game uses a separate launcher, capture after entering the game itself.
 
 ## Click-through (F8)
 
@@ -68,8 +77,11 @@ A permanent fix requires a code-signing certificate (a few hundred USD per year)
 |---|---|---|
 | `KeyVisualizer.zip` (folder) | **Recommended**, most users | Must be extracted first |
 | `KeyVisualizer_single.exe` | Carrying on a USB stick | Most likely to trip antivirus, slower start |
+| `KeyVisualizer_Lite.zip` (no recording) | Streaming only, guaranteed no key logs on disk | No F4 / auto record |
 
-`build_exe.bat` produces both in one run — upload both and let users pick.
+The Lite build removes recording entirely: F4 does nothing, recording options are hidden, and no `recordings/` folder is created. Everything else is identical. It does **not** reduce antivirus false positives (those come from key capture itself). From source: `python key_visualizer_lite.py`.
+
+`build_exe.bat` produces all three in one run — upload them all and let users pick.
 
 ## Notes
 

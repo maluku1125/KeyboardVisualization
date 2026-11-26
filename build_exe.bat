@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ============================================
-echo  Build Key Visualizer  (folder + single)
+echo  Build Key Visualizer  (folder + single + Lite)
 echo ============================================
 echo.
 
@@ -17,7 +17,7 @@ if errorlevel 1 (
     )
 )
 
-echo [1/2] Folder build (antivirus-friendly, recommended)...
+echo [1/3] Folder build (antivirus-friendly, recommended)...
 python -m PyInstaller --onedir --noconsole --name KeyVisualizer --clean --noconfirm key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Folder build failed. Copy the error message above to Claude.
@@ -26,7 +26,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/2] Single-file build (portable, more AV false positives)...
+echo [2/3] Single-file build (portable, more AV false positives)...
 python -m PyInstaller --onefile --noconsole --name KeyVisualizer_single --noconfirm key_visualizer.py
 if errorlevel 1 (
     echo [ERROR] Single-file build failed.
@@ -34,7 +34,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo.
+echo [3/3] Lite folder build (no recording)...
+python -m PyInstaller --onedir --noconsole --name KeyVisualizer_Lite --noconfirm key_visualizer_lite.py
+if errorlevel 1 (
+    echo [ERROR] Lite build failed.
+    pause
+    exit /b 1
+)
+
 if exist config.json copy /y config.json dist\KeyVisualizer\config.json >nul
+if exist config.json copy /y config.json dist\KeyVisualizer_Lite\config.json >nul
 
 REM ---- package the folder build into a zip for uploading ----
 echo.
@@ -47,12 +57,21 @@ if errorlevel 1 (
 ) else (
     echo Zip created: dist\KeyVisualizer.zip
 )
+if exist dist\KeyVisualizer_Lite.zip del /q dist\KeyVisualizer_Lite.zip
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Compress-Archive -Path 'dist\KeyVisualizer_Lite' -DestinationPath 'dist\KeyVisualizer_Lite.zip' -CompressionLevel Optimal -Force"
+if errorlevel 1 (
+    echo [WARN] Lite zip failed. Compress the dist\KeyVisualizer_Lite folder manually.
+) else (
+    echo Zip created: dist\KeyVisualizer_Lite.zip
+)
 
 echo.
 echo ============================================
-echo  Done. Upload these two:
+echo  Done. Upload these three:
 echo    dist\KeyVisualizer.zip          (folder build - recommended)
 echo    dist\KeyVisualizer_single.exe   (single file - portable)
+echo    dist\KeyVisualizer_Lite.zip     (no recording)
 echo ============================================
 if exist dist\KeyVisualizer.zip explorer /select,"%cd%\dist\KeyVisualizer.zip"
 pause
